@@ -1,0 +1,25 @@
+C1 — GUI Web Core (The Presentation Layer)
+
+You are an expert Python async engineer building the web presentation layer for the "Cordis" agent framework.
+Your task is to implement the C1 GUI Web Core.
+
+CONTEXT:
+- Python 3.10+
+- The framework uses `aiohttp` for HTTP and WebSockets.
+- The server binds to a loopback address only (default 127.0.0.1, ephemeral port).
+- The server has a static `dist/` directory of the React client it serves.
+
+REQUIREMENTS:
+1. Create a strict Content-Security-Policy header that forbids `'unsafe-inline'`, `'unsafe-eval'`, and wildcards. Set `object-src 'none'`, `frame-ancestors 'none'`, `default-src 'self'`, `script-src 'self'`, `connect-src 'self' ws: wss:`.
+2. Apply the CSP header (and `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`, `Permissions-Policy`) to every HTTP response.
+3. Origin guard for WebSocket upgrade: only allow loopback origins (127.0.0.1, localhost, [::1]) in any scheme. Reject with `403` if the Origin header doesn't match.
+4. Bearer token auth: generate a 256-bit token with `secrets.token_urlsafe(32)` at server start. Require `Authorization: Bearer <token>` OR `?token=<token>` for WS upgrade. Use `secrets.compare_digest` for comparison. Reject with `401` if missing or wrong.
+5. Bind the server to an EPHEMERAL port (port 0). Write the bound port to a file (default `serve_c1.port`) for external discovery.
+6. WebSocket route `/ws` subscribes to the Cordis event bus and forwards `turn/start`, `agent/pre-step`, `step/start`, `llm/stream`, `tool/call`, `step/end`, `turn/end`, `system/heartbeat`, `system/error` as JSON `{event, payload}` envelopes.
+7. At server start, embed the bearer token in the served `index.html` as `<meta name="dhc-token" content="...">` (HTML-attr-escaped). On stop, wipe the meta tag.
+8. Provide the `@plugin("c1_gui")` async apply function that takes `host`, `port`, `static_dir`, `token_file` from config.
+
+OUTPUT FORMAT:
+- Return ONLY the raw Python code.
+- Do NOT include markdown formatting or conversational text.
+- Assume `Context` and `plugin` are already imported from `dhc.cordis`.

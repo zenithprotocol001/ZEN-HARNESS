@@ -1,0 +1,11 @@
+{
+  "id": "prompt_browser_v1",
+  "name": "Prompt Browser",
+  "version": "0.1.0",
+  "author": "DHC core",
+  "description": "Reads the 10 master prompts under src/dhc/eval/prompts/ and exposes them on the C1 /prompts route for the Prompts tab.",
+  "requires": [],
+  "capabilities": [],
+  "sha256": "b33c95c21e7617e773c117a2e730b8cf87c82823bb96f60b61c044aa78f1df85",
+  "config_schema": {"type": "object"}
+}

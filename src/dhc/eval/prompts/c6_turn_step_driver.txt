@@ -1,0 +1,32 @@
+C6 — Turn Step Driver (The Orchestration Engine)
+
+You are an expert Python async engineer building the core orchestration loop for the "Cordis" agent framework.
+Your task is to implement the C6 Turn Step Driver.
+
+CONTEXT:
+- Python 3.10+
+- The framework uses an async `EventEmitter` with `emit(event, payload)` and `waterfall(event, initial_payload)` methods.
+- Listeners receive ONLY the payload, not the event name.
+- You have access to `ctx.inject("sessions")` (SessionLog), `ctx.inject("prompt")`, `ctx.inject("llm")`, and `ctx.inject("tools")`.
+
+REQUIREMENTS:
+1. Create a `TurnStepDriver` class with an `async def run_turn(self, agent_id: str, user_message: str) -> dict` method.
+2. WATERFALL ORCHESTRATION:
+   - Emit `turn/start`.
+   - Loop through steps. For each step:
+     a. Call `ctx.events.waterfall("agent/pre-step", {"prompt": "..."})`.
+     b. Emit `step/start`.
+     c. Stream from the LLM (mocked for this benchmark as returning a dict with `content` and `tool_calls`).
+     d. If `tool_calls` exist, emit `tools/pre-execute`, execute them via `ctx.inject("tools").invoke()`, and append results.
+     e. Emit `step/end`.
+3. SECURITY CONSTRAINT (DOS CIRCUIT BREAKER):
+   - Enforce a hard limit of `max_steps=5`.
+   - If the step count reaches 5, you MUST break the loop, emit `turn/end` with `reason: "max_steps_exceeded"`, and raise a custom `StepLimitExceeded` exception.
+   - Ensure the circuit breaker triggers even if the LLM returns clean text on the 5th step.
+4. Handle both `async def` and regular `def` tool executors safely.
+5. Provide the `@plugin("c6_loop")` async apply function.
+
+OUTPUT FORMAT:
+- Return ONLY the raw Python code.
+- Do NOT include markdown formatting or conversational text.
+- Assume `Context` and `plugin` are already imported from `dhc.cordis`.

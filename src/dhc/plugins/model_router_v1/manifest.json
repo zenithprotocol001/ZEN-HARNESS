@@ -1,0 +1,17 @@
+{
+  "id": "model_router_v1",
+  "name": "Model Router",
+  "version": "0.1.0",
+  "author": "DHC core",
+  "description": "Per-agent LLM selection. Tags every llm/stream event with the chosen model name so the GUI can visualize routing.",
+  "requires": [],
+  "capabilities": [],
+  "sha256": "e459a03e6e469324b3d93889a1fddf8645d840d02bea21ea5c22a007b0be2fa2",
+  "config_schema": {
+    "type": "object",
+    "properties": {
+      "default": {"type": "string", "default": "primary"},
+      "routing": {"type": "object", "additionalProperties": {"type": "string"}}
+    }
+  }
+}

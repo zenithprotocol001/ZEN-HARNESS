@@ -1,0 +1,16 @@
+{
+  "id": "memory_store_v1",
+  "name": "Memory Store",
+  "version": "0.1.0",
+  "author": "DHC core",
+  "description": "Per-agent in-memory key/value store. Listens for memory/store and memory/recall events; emits memory/result.",
+  "requires": [],
+  "capabilities": [],
+  "sha256": "ccea4ff8e3d680f3a2f1bc76cc5fac8b6a837507a26663bb3203a4ac3b003d8b",
+  "config_schema": {
+    "type": "object",
+    "properties": {
+      "cap_per_agent": {"type": "integer", "default": 1024, "minimum": 1}
+    }
+  }
+}

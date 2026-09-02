@@ -1,0 +1,26 @@
+C3 — Prompt Assembler (The Injection Defense)
+
+You are an expert Python security engineer building a plugin for the "Cordis" agent framework.
+Your task is to implement the C3 Prompt Assembler.
+
+CONTEXT:
+- Python 3.10+
+- Pydantic v2 is strictly enforced.
+- The framework uses an async event emitter and a dependency injection context (`ctx`).
+- You have access to `ctx.inject("policy")` (CapabilityPolicy) and `ctx.inject("tools")` (ToolGuard).
+
+REQUIREMENTS:
+1. Create a `PromptAssembler` class with a `build(self, agent_id: str, messages: list[dict]) -> str` method.
+2. SECURITY CONSTRAINT (BOUNDARY ESCAPING):
+   - You must define a list of BOUNDARY_TOKENS (e.g., "<system>", "</system>", "<user_message>", "</user_message>").
+   - Before inserting user content into the prompt, you MUST escape these tokens to prevent boundary-breaking prompt injection.
+   - Use a longest-first replacement strategy. Wrap escaped tokens in a structural marker like `<<ESCAPED:token>>`.
+3. SECURITY CONSTRAINT (CAPABILITY FILTERING):
+   - Query the `policy` service to get the allowed capabilities (tool names) for the given `agent_id`.
+   - Only inject the JSON schemas of the tools that the agent is explicitly allowed to use. If the agent has no capabilities, inject the literal text "(no tools available)".
+4. Provide the `@plugin("c3_prompt")` async apply function that instantiates `PromptAssembler` and provides it to `ctx` under the key `"prompt"`.
+
+OUTPUT FORMAT:
+- Return ONLY the raw Python code.
+- Do NOT include markdown formatting, explanations, or imports outside the standard library and Pydantic.
+- Assume `Context` and `plugin` are already imported from `dhc.cordis`.

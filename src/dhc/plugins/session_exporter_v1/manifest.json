@@ -1,0 +1,16 @@
+{
+  "id": "session_exporter_v1",
+  "name": "Session Exporter",
+  "version": "0.1.0",
+  "author": "DHC core",
+  "description": "On every turn/end, writes the C2 SessionEventLog history to an NDJSON file in the configured output directory.",
+  "requires": [],
+  "capabilities": [],
+  "sha256": "35e6985c9ee8dee4b47e49a01d4daa4f817d933cf3b09605ded754d1a2367c75",
+  "config_schema": {
+    "type": "object",
+    "properties": {
+      "out_dir": {"type": "string", "default": "~/.dhc/sessions"}
+    }
+  }
+}

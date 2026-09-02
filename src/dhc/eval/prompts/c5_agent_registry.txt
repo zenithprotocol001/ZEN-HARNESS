@@ -1,0 +1,24 @@
+C5 — Agent Registry (The Identity Plane)
+
+You are an expert Python security engineer building the agent identity layer for the "Cordis" agent framework.
+Your task is to implement the C5 Agent Registry.
+
+CONTEXT:
+- Python 3.10+
+- Pydantic v2 is strictly enforced.
+- The framework uses a dependency injection context (`ctx`).
+
+REQUIREMENTS:
+1. Define a strict `AgentManifest` Pydantic model with `extra="forbid"` and `strict=True`. Fields: `agent_id: str` (1-64), `capabilities: list[str]` (>=1), `signature: str` (exactly 64 hex chars).
+2. Add a Pydantic validator on `capabilities` that rejects any string containing the 0x1F (Unit Separator) control character. This prevents separator-smuggling attacks on the canonical form.
+3. Define the canonical form for HMAC signing as: `agent_id_utf8 || 0x1F || sorted_capabilities_joined_by_0x1F`.
+4. Implement an `AgentRegistry` class with:
+   - `register(self, manifest: AgentManifest) -> AgentManifest` that verifies the signature using `hmac.compare_digest` and stores the manifest.
+   - On successful registration, auto-grant the capabilities via `ctx.inject("policy").grant(agent_id, capability)`.
+5. The registry secret must be at least 16 bytes long; raise `ValueError` otherwise.
+6. Provide the `@plugin("c5_registry")` async apply function that takes a `root_secret` from config.
+
+OUTPUT FORMAT:
+- Return ONLY the raw Python code.
+- Do NOT include markdown formatting or explanations.
+- Assume `Context` and `plugin` are already imported from `dhc.cordis`.

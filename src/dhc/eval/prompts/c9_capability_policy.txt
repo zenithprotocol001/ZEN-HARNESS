@@ -1,0 +1,24 @@
+C9 — Capability Policy (The Sandbox)
+
+You are an expert Python security engineer building the capability policy layer for the "Cordis" agent framework.
+Your task is to implement the C9 Capability Policy.
+
+CONTEXT:
+- Python 3.10+
+- Pydantic v2 is strictly enforced.
+- The framework uses an async `EventEmitter`.
+
+REQUIREMENTS:
+1. Create a `CapabilityDenied` exception.
+2. Create a `PreExecutePayload` Pydantic model with `extra="forbid"` and `strict=True`. Fields: `agent_id: str` (1-64), `tool_name: str` (1-64).
+3. Create a `CapabilityPolicy` class that:
+   - Denies ALL capabilities by default (no agent has any capability).
+   - `grant(agent_id, capability)`, `revoke(agent_id, capability)`, `check(agent_id, tool_name)` (raises `CapabilityDenied` if not granted), and `capabilities_of(agent_id) -> set[str]`.
+   - Storage is private; external `setattr` cannot mutate it (use `__slots__` with a name-mangled attribute, or use `object.__getattribute__` internally).
+4. Attach a listener for the `tools/pre-execute` event that validates the payload via `PreExecutePayload.model_validate` and calls `check(agent_id, tool_name)`. Any `CapabilityDenied` propagates as the event raise.
+5. Provide the `@plugin("c9_policy")` async apply function that exposes the policy as `ctx.inject("policy")` and detaches the listener on dispose.
+
+OUTPUT FORMAT:
+- Return ONLY the raw Python code.
+- Do NOT include markdown formatting or explanations.
+- Assume `Context` and `plugin` are already imported from `dhc.cordis`.

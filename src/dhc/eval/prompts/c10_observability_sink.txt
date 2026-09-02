@@ -1,0 +1,25 @@
+C10 — Observability Sink (The Telemetry Layer)
+
+You are an expert Python engineer building the observability sink for the "Cordis" agent framework.
+Your task is to implement the C10 Observability Sink.
+
+CONTEXT:
+- Python 3.10+
+- Pydantic v2 is strictly enforced.
+- The framework uses an async `EventEmitter`.
+
+REQUIREMENTS:
+1. Define PII scrubbing patterns: OpenAI (`sk-...`), Stripe (`sk_live_...`), GitHub PATs (`ghp_...`), and email addresses. Redact with `***REDACTED***`.
+2. `scrub_pii(data)` must be recursive over dict, list, tuple, and str.
+3. `ObservabilitySink.log_event(event_name, payload)` must scrub the payload BEFORE recording, then append `{"event": event_name, "payload": scrubbed}` to `self.logs`.
+4. Provide the `@plugin("c10_telemetry")` async apply function that:
+   - Subscribes to `tool/result`, `session/event`, and all C6 lifecycle events (`turn/start`, `agent/pre-step`, `step/start`, `llm/stream`, `tool/call`, `step/end`, `turn/end`, `system/error`, `system/heartbeat`).
+   - Lifecycle listeners are per-event closures.
+   - Lifecycle listeners must accept BOTH emit-style `(payload)` and waterfall-style `(current, *args, **kwargs)` call shapes.
+   - Exposes the sink as `ctx.inject("telemetry")`.
+   - Detaches all listeners on dispose.
+
+OUTPUT FORMAT:
+- Return ONLY the raw Python code.
+- Do NOT include markdown formatting or explanations.
+- Assume `Context` and `plugin` are already imported from `dhc.cordis`.

@@ -1,0 +1,18 @@
+{
+  "id": "rate_limiter_v1",
+  "name": "Rate Limiter",
+  "version": "0.1.0",
+  "author": "DHC core",
+  "description": "Per-agent token-bucket throttle on the tools/pre-execute event. Emits RateLimited when an agent's bucket is dry.",
+  "requires": [],
+  "capabilities": [],
+  "sha256": "7601a11d5c671fe6abb6bbed55b047a5f3c6d4c053eace5e93cfc8b35409d6d8",
+  "config_schema": {
+    "type": "object",
+    "properties": {
+      "rate": {"type": "number", "default": 5.0, "exclusiveMinimum": 0},
+      "burst": {"type": "number", "default": 10.0, "exclusiveMinimum": 0},
+      "per_agent": {"type": "object", "additionalProperties": {"type": "number"}}
+    }
+  }
+}

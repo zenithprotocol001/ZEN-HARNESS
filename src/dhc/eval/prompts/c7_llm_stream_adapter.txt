@@ -1,0 +1,26 @@
+C7 — LLM Stream Adapter (The Model Seam)
+
+You are an expert Python async engineer building the LLM stream consumer for the "Cordis" agent framework.
+Your task is to implement the C7 LLM Stream Adapter.
+
+CONTEXT:
+- Python 3.10+
+- The framework uses an async `EventEmitter`.
+- We use `httpx` for HTTP and stream Server-Sent Events (SSE) from an OpenAI-compatible provider.
+
+REQUIREMENTS:
+1. Create a `StreamChunk` Pydantic v2 model with `extra="forbid"` and `strict=True`. Fields: `delta: str`, `tool_calls: list[dict]`, `finish_reason: str | None`, `raw_index: int`.
+2. Create an `LLMStreamAdapter` class with:
+   - `__init__(self, base_url: str, api_key: str)` that stores a REDACTED form of the api key (`sk-a***890` style) on `self.redacted_key`. NEVER log the raw key.
+   - `async def stream(self, prompt: str, scenario: str) -> AsyncIterator[StreamChunk]` that opens an SSE connection to `{base_url}/v1/stream/{scenario}`.
+3. SECURITY CONSTRAINT (BUFFER BOUND):
+   - Define a `_MAX_BUFFER` constant (e.g. 1 MiB). If the cumulative buffer exceeds this cap during streaming (whether from a single chunk or many small chunks), raise `BufferOverflow`. The exception message MUST use `self.redacted_key`, never the raw key.
+4. SSE PARSING:
+   - Buffer bytes until you see the `\n\n` event terminator. Then parse the `data: ` payload as JSON.
+   - Skip comments (lines starting with `:`), malformed JSON, and the `[DONE]` sentinel.
+5. Provide the `@plugin("c7_llm_stream")` async apply function that registers the adapter as `ctx.inject("llm")`.
+
+OUTPUT FORMAT:
+- Return ONLY the raw Python code.
+- Do NOT include markdown formatting or conversational text.
+- Assume `Context` and `plugin` are already imported from `dhc.cordis`.

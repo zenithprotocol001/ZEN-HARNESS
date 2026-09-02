@@ -1,0 +1,27 @@
+C8 — Webhook Dispatch (The Cryptographic Gatekeeper)
+
+You are an expert Python cryptography engineer building an ingress webhook handler for the "Cordis" agent framework.
+Your task is to implement the C8 Webhook Dispatch.
+
+CONTEXT:
+- Python 3.10+
+- Pydantic v2 is strictly enforced. `extra="forbid"` and `strict=True` are mandatory.
+- The framework uses a dependency injection context (`ctx`).
+
+REQUIREMENTS:
+1. Create a `WebhookDispatch` class with an `accept(self, body: bytes, signature_header: str, timestamp: str, nonce: str) -> WebhookPayload` method.
+2. SECURITY CONSTRAINT (CONSTANT-TIME HMAC):
+   - Verify the HMAC-SHA256 signature of the canonical string: `timestamp + "." + nonce + "." + body.decode()`.
+   - You MUST use `hmac.compare_digest` for the comparison. Using `==` is a critical failure.
+3. SECURITY CONSTRAINT (REPLAY PROTECTION):
+   - Maintain a bounded ring buffer (e.g., `collections.OrderedDict` capped at 4096) of seen nonces.
+   - If a nonce is reused, raise `ReplayDetected`.
+4. SECURITY CONSTRAINT (TIMESTAMP SKEW):
+   - Reject timestamps that are more than 5 minutes (300,000 ms) away from the current time. Raise `ExpiredTimestamp`.
+5. Define a strict `WebhookPayload` Pydantic model that rejects extra fields.
+6. Provide the `@plugin("c8_webhook")` async apply function.
+
+OUTPUT FORMAT:
+- Return ONLY the raw Python code.
+- Do NOT include markdown formatting or explanations.
+- Assume `Context` and `plugin` are already imported from `dhc.cordis`.

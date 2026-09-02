@@ -1,0 +1,28 @@
+C2 — Session Event Log (The State Plane)
+
+You are an expert Python engineer building the session event log for the "Cordis" agent framework.
+Your task is to implement the C2 Session Event Log.
+
+CONTEXT:
+- Python 3.10+
+- Pydantic v2 is strictly enforced.
+- The framework uses an async `EventEmitter`.
+
+REQUIREMENTS:
+1. Create a `SessionEvent` Pydantic model with `extra="forbid"` and `frozen=True`. Fields: `id: str`, `type: str`, `payload: dict`.
+2. Create a `HeartbeatEvent` Pydantic model with `extra="forbid"` and `frozen=True`. Fields: `seq: int`, `ts_ms: int`, `source: str`, `detail: dict`.
+3. Create a `SessionLog` class with:
+   - `append(event)`, `get_history() -> tuple[SessionEvent, ...]` (immutable tuple snapshot, NOT a list copy), `branch(branch_id)`, `get_branch(branch_id)`.
+   - `record_heartbeat(ts_ms, source, detail) -> HeartbeatEvent` that stores into a `collections.deque(maxlen=heartbeat_ring_size)` — heartbeats MUST NEVER enter the immutable session log (they are ring-buffered to prevent OOM).
+   - `get_heartbeats() -> tuple[HeartbeatEvent, ...]`.
+4. Provide the `@plugin("c2_session")` async apply function that:
+   - Subscribes to `session/event`, `system/heartbeat`, AND all C6 lifecycle events (`turn/start`, `agent/pre-step`, `step/start`, `llm/stream`, `tool/call`, `step/end`, `turn/end`, `system/error`).
+   - Lifecycle listeners are per-event closures (each captures the event name as a closure variable).
+   - Lifecycle listeners must accept BOTH emit-style `(payload)` and waterfall-style `(current, *args, **kwargs)` call shapes.
+   - Exposes the log as `ctx.inject("sessions")`.
+   - Detaches all listeners on dispose.
+
+OUTPUT FORMAT:
+- Return ONLY the raw Python code.
+- Do NOT include markdown formatting or explanations.
+- Assume `Context` and `plugin` are already imported from `dhc.cordis`.

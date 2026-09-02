@@ -1,0 +1,28 @@
+C4 — Tool Guard Pipeline (The Security Boundary)
+
+You are an expert Python security engineer building the tool execution layer for the "Cordis" agent framework.
+Your task is to implement the C4 Tool Guard Pipeline.
+
+CONTEXT:
+- Python 3.10+
+- Pydantic v2 is strictly enforced. `extra="forbid"` and `strict=True` are mandatory on all input models.
+- The framework uses a dependency injection context (`ctx`).
+
+REQUIREMENTS:
+1. Define strict Pydantic input models for every tool:
+   - `ReadFileInput` with a `path: str` field (1-256 chars).
+   - `BashInput` with `command: list[str]` where every token matches `^[a-zA-Z0-9_\-./:=]+$`. Reject shell metacharacters (`;|&<>`$``\\/n/r`).
+   - `BashInput` must also have `cwd` constrained to a Literal list and `timeout: int` bounded to [1, 30].
+2. SECURITY CONSTRAINT (PATH TRAVERSAL):
+   - In `ReadFileInput.path`, reject any path containing `..` segments or starting with `/etc/`.
+3. SECURITY CONSTRAINT (METACHARACTER BLOCKING):
+   - For any `BashInput.command` token, reject if it does not match the POSIX-safe token regex.
+   - For any token equal to `..` or starting with `/etc/`, reject.
+4. Implement a `ToolGuard` class with `register(name, executor, schema)` and `async def invoke(name, args) -> Any`.
+5. The `invoke` method must run `schema.model_validate(args)` FIRST (strict pydantic v2), THEN the custom security checks, THEN the executor. All errors raise `ToolSecurityError` (a custom exception).
+6. Provide the `@plugin("c4_tools")` async apply function that registers mock `read_file` and `bash` tools.
+
+OUTPUT FORMAT:
+- Return ONLY the raw Python code.
+- Do NOT include markdown formatting or conversational text.
+- Assume `Context` and `plugin` are already imported from `dhc.cordis`.
