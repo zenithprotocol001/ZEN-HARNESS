@@ -1,0 +1,160 @@
+DHC v1.3.0 — Relay Manifest
+============================
+
+Ship date:    2026-09-02
+DHC-V:        100.0 (production_ready)
+Findings:     0 critical, 0 high, 0 medium, 0 low
+Test count:   388 passing, 2 skipped, 1 xpassed
+Invariants:   100+ passing (positive + negative)
+Bundled plugins: 5
+SHAs pinned:  5 / 5 (see docs/SHA-PINNING.md)
+
+What's new in v1.3.0 (over v1.2.1)
+-----------------------------------
+- 3 live LLM provider clients (OpenAI, Anthropic, OpenRouter)
+  behind an LLMProvider abstract base, with a 3-attempt, 1 s/2 s
+  linear retry policy (5xx + network errors only, no 4xx retry).
+- ModelRegistry with 6 hardcoded models across 4 providers
+  (mock-llm/default, openai/gpt-4o-mini, openai/gpt-4.1,
+  anthropic/claude-3-5-sonnet-latest, anthropic/claude-3-5-haiku-latest,
+  openrouter/auto).
+- C7 dispatch: LLMStreamAdapter accepts optional model_registry +
+  secrets_service; live dispatch when both are set and the model
+  is not the mock.
+- 2 new C1 routes: GET /api/models, GET /api/models/{id} (with
+  regex constraint to allow slashes in the id).
+- <ModelSelect> React component in the chat header, persisted
+  per-session via PATCH /api/sessions/{id} with {"model": ...}.
+- 3 new docs (v1.3.0-technical-spec, v1.3.0-test-plan, and
+  3 new ADRs: 0007, 0008, 0009).
+- Test count: 318 → 388 (+70).
+
+What's in v1.2.x (carried forward)
+----------------------------------
+- 4-tab web UI: Modules, Events, Prompts, Chat.
+- Server-side chat sessions (SessionManager) and encrypted
+  secrets (SecretsService).
+- Mock LLM fixture at tests/fixtures/mock_llm.py.
+- <Markdown/> component as the single owner of
+  dangerouslySetInnerHTML (ADR-0005).
+- /ws/chat, /api/sessions[/...], /api/secrets[/...], /api/llm/health.
+- 5 SHA-pinned plugins under src/dhc/plugins/.
+- 19-check v1.2.0 chat smoke (smoke_v12.py).
+
+Module map
+----------
+C1  GuiWebCore           — aiohttp + WS + CSP + bearer token + marketplace routes + chat/sessions/secrets/LLM-health + /api/models routes + ws/chat
+C2  SessionEventLog      — append-only tuple history with branching
+C3  PromptAssembler      — boundary tokens + capability-filtered tool schema
+C4  ToolGuardPipeline    — strict pydantic schemas; BashInput.command is list[str]
+C5  AgentRegistry        — HMAC-SHA256 manifests; 0x1F-separated canonical form
+C6  TurnStepDriver       — waterfall + circuit breaker (max_steps=5)
+C7  LLMStreamAdapter     — OpenAI-compatible SSE (GET + POST); 1 MiB buffer cap; v1.3.0 dispatch seam (model_registry + secrets_service)
+C8  WebhookDispatch      — HMAC verify + LRU nonce store + ±5 min window
+C9  CapabilityPolicy     — deny-all default; intercepts tools/pre-execute
+C10 ObservabilitySink    — recursive PII/secret scrubber
+
+New in v1.3.0
+--------------
+src/dhc/integrations/
+  __init__.py             provider_client_for(model) factory
+  base.py                 LLMProvider ABC, RetryConfig, ProviderError
+  openai_client.py        OpenAIClient (OpenAI SSE parser + retry loop)
+  anthropic_client.py     AnthropicClient (Anthropic SSE parser + retry)
+  openrouter_client.py    OpenRouterClient (OpenAI-compatible + retry)
+
+src/dhc/services/
+  model_registry.py       Model + ModelRegistry (6 hardcoded models)
+
+Web client
+----------
+4 tabs: Modules, Events, Prompts, Chat
+  apps/web/src/App.tsx                  router + WS (4 tabs)
+  apps/web/src/panels/ModulesPanel.tsx  module/plugin grid + paste-and-score
+  apps/web/src/panels/EventsPanel.tsx   live event stream
+  apps/web/src/panels/PromptsPanel.tsx  10 master prompts browser
+  apps/web/src/panels/ChatPanel.tsx     chat (sessions, streaming, search, model select)
+  apps/web/src/panels/SessionList.tsx   left-rail session history
+  apps/web/src/components/Markdown.tsx  <Markdown/> + <ToolResult/> (XSS guardrail)
+  apps/web/src/components/ModelSelect.tsx   v1.3.0 model selector (ADR-0006)
+  apps/web/src/components/SearchOverlay.tsx  Ctrl+K search modal
+  apps/web/src/components/ModuleCard.tsx shared module/plugin card
+  apps/web/src/types/chat.ts            shared types (Message, Session, ChatFrame)
+  apps/web/src/sanitize.ts              DOMPurify wrappers (renderMarkdown, renderToolResult)
+
+Plugin marketplace
+------------------
+5 bundled plugins under src/dhc/plugins/, each with manifest.json + service.py:
+  rate_limiter_v1       7601a11d5c671fe6abb6bbed55b047a5f3c6d4c053eace5e93cfc8b35409d6d8
+  session_exporter_v1   35e6985c9ee8dee4b47e49a01d4daa4f817d933cf3b09605ded754d1a2367c75
+  model_router_v1       e459a03e6e469324b3d93889a1fddf8645d840d02bea21ea5c22a007b0be2fa2
+  memory_store_v1       ccea4ff8e3d680f3a1bc76cc5fac8b6a837507a26663bb3203a4ac3b003d8b
+  prompt_browser_v1     b33c95c21e7617e773c117a2e730b8cf87c82823bb96f60b61c044aa78f1df85
+
+C1 routes
+---------
+v1.1.0 (unchanged):
+  GET    /                       static index.html with embedded <meta name="dhc-token">
+  GET    /healthz                modules + discovered plugins + loaded plugins
+  GET    /ws                     WebSocket event stream (token in query, loopback origin)
+  GET    /api/manifest           full manifest (modules + plugins)
+  GET    /plugins                discovered vs loaded plugins
+  POST   /plugins/{id}           load a plugin
+  DELETE /plugins/{id}           unload a plugin
+  GET    /prompts                list 10 master prompts (requires prompt_browser_v1)
+  GET    /prompts/{key}          single prompt body
+  POST   /api/eval               offline in-proc eval of pasted code
+
+v1.2.0:
+  WS     /ws/chat                chat request/response (bearer token + loopback origin)
+  GET    /api/llm/health         LLM adapter reachability
+  GET    /api/sessions           list session summaries (?q= full-text, ?search= legacy)
+  POST   /api/sessions           create a session
+  GET    /api/sessions/{id}      full session
+  PATCH  /api/sessions/{id}      rename/pin/archive/tag/set-model
+  DELETE /api/sessions/{id}      soft-delete (or ?hard=1 to remove file)
+  POST   /api/sessions/{id}/messages  send a turn; returns assistant message
+  GET    /api/secrets            list names only (NEVER values)
+  PUT    /api/secrets/{name}     encrypt and store
+  DELETE /api/secrets/{name}     remove
+
+v1.3.0 (new):
+  GET    /api/models             list 6 hardcoded models (ADR-0006)
+  GET    /api/models/{id:.+}     fetch a single model
+
+Static verification (no Python needed)
+-------------------------------------
+scripts/static_check.ps1
+scripts/c8_static_check.ps1
+scripts/invariants_check.ps1
+scripts/hmac_sanity_check.ps1
+scripts/package_relay.ps1
+scripts/dod_verify.ps1
+
+Sync recipe (from a provisioned host with git + gh)
+----------------------------------------------------
+unzip harness_benchmark-v1.3.0-20260902.zip
+cd harness_benchmark
+git init
+git add .
+git commit -m "v1.3.0 reference implementation (DHC-V 100.0, live LLM providers)"
+git remote add origin git@github.com:zenithprotocol001/harness.git
+git push -u origin main --force
+
+Files excluded from this artifact
+---------------------------------
+serve_c1.port
+serve_c1.token
+serve_c1.log
+serve_c1.err.log
+demo_live.log
+demo_live.err.log
+heartbeat.log
+heartbeat.err.log
+heartbeat_demo.log
+heartbeat_demo.err.log
+heartbeat_long.log
+heartbeat_long.err.log
+__pycache__/
+.pytest_cache/
+*.pid
