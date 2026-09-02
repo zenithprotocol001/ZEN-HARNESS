@@ -40,6 +40,10 @@ class AnthropicClient(LLMProvider):
         model: str,
         api_key: str,
         retry_config: RetryConfig | None = None,
+        *,
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+        top_p: float | None = None,
     ) -> AsyncIterator[StreamChunk]:
         rc = retry_config or RetryConfig()
         # Anthropic expects the system message separately.
@@ -50,13 +54,18 @@ class AnthropicClient(LLMProvider):
                 system_text += (m.get("content") or "")
             else:
                 chat_messages.append(m)
+        # Anthropic requires `max_tokens` in every request; use the
+        # caller's value or a conservative default.
         body: dict = {
             "model": model,
             "messages": chat_messages,
-            "max_tokens": _DEFAULT_MAX_TOKENS,
-            "temperature": _DEFAULT_TEMPERATURE,
+            "max_tokens": max_tokens if max_tokens is not None else _DEFAULT_MAX_TOKENS,
             "stream": True,
         }
+        if temperature is not None:
+            body["temperature"] = temperature
+        if top_p is not None:
+            body["top_p"] = top_p
         if system_text:
             body["system"] = system_text
         headers = {
@@ -179,9 +188,23 @@ async def _consume_anthropic_sse(resp: httpx.Response) -> AsyncIterator[StreamCh
                     index += 1
             elif evt == "message_delta":
                 stop = (obj.get("delta") or {}).get("stop_reason")
-                if stop:
+                # v1.3.1: Anthropic returns token usage on
+                # `message_delta` events. The `usage` object lives
+                # at the top level of the event payload.
+                usage_obj = obj.get("usage")
+                usage_chunk: dict | None = None
+                if usage_obj:
+                    usage_chunk = {
+                        "prompt_tokens": int(usage_obj.get("input_tokens", 0)),
+                        "completion_tokens": int(usage_obj.get("output_tokens", 0)),
+                        "total_tokens": int(usage_obj.get("input_tokens", 0)) + int(usage_obj.get("output_tokens", 0)),
+                    }
+                if stop or usage_chunk:
                     yield StreamChunk(
-                        delta="", finish_reason=stop, raw_index=index,
+                        delta="",
+                        finish_reason=stop,
+                        raw_index=index,
+                        usage=usage_chunk,
                     )
                     index += 1
             elif evt == "message_stop":

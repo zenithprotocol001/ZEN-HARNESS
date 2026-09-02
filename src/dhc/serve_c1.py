@@ -88,11 +88,16 @@ async def build_context(
     # at apply() time. If the user disables --secrets-dir, this
     # stays as None and C7 falls through to the v1.2.x mock path.
     secrets_service: Any = None
+    config_store: Any = None
     if secrets_dir is not None:
         from dhc.cordis.secrets import SecretsService
+        from dhc.services.model_config import ModelConfigStore
 
         secrets_dir.mkdir(parents=True, exist_ok=True)
         secrets_service = SecretsService(secrets_dir)
+        # v1.3.1 (ADR-0011): per-session model config store, shared
+        # with the C1 routes (model_config_store on web_core).
+        config_store = ModelConfigStore(secrets_service)
 
     for name, fn in PLUGINS:
         cfg: dict[str, Any] = {}
@@ -117,6 +122,7 @@ async def build_context(
                 "api_key": llm_api_key,
                 "model_registry": model_registry,
                 "secrets_service": secrets_service,
+                "config_store": config_store,
             }
         await fn(ctx, cfg)
     return ctx

@@ -16,7 +16,6 @@ from dhc.integrations.openai_client import _consume_openai_sse
 from dhc.modules.c7_llm_stream_adapter.service import StreamChunk
 
 _OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
-_DEFAULT_MAX_TOKENS = 4096
 
 
 class OpenRouterClient(LLMProvider):
@@ -32,14 +31,27 @@ class OpenRouterClient(LLMProvider):
         model: str,
         api_key: str,
         retry_config: RetryConfig | None = None,
+        *,
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+        top_p: float | None = None,
     ) -> AsyncIterator[StreamChunk]:
         rc = retry_config or RetryConfig()
-        body = {
+        body: dict = {
             "model": model,
             "messages": list(messages),
             "stream": True,
-            "max_tokens": _DEFAULT_MAX_TOKENS,
+            # v1.3.1: ask for usage. OpenRouter's OpenAI-compatible
+            # endpoint honors `stream_options.include_usage` and
+            # emits a usage-only chunk at the end.
+            "stream_options": {"include_usage": True},
         }
+        if temperature is not None:
+            body["temperature"] = temperature
+        if max_tokens is not None:
+            body["max_tokens"] = max_tokens
+        if top_p is not None:
+            body["top_p"] = top_p
         headers = {
             "Content-Type": "application/json",
             "Authorization": f"Bearer {api_key}",

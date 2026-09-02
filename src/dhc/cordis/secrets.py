@@ -12,6 +12,18 @@ access and is missing the optional `cryptography` dependency. The
 available stdlib primitives are `hashlib` (HMAC, SHA-2, SHA-3, SHAKE)
 and `hmac`. We build an authenticated stream cipher on top of those.
 
+Envelope versions (ADR-0010):
+
+  v0x01  (HEADER="DHC1") — fixed scrypt salt b"dhc-secrets-v1".
+  v0x02  (HEADER="DHC2") — per-envelope nonce as the scrypt salt.
+
+Both versions use the same on-disk layout:
+
+  HEADER (4) || nonce (16) || ciphertext (n) || tag (32)
+
+`open_envelope` dispatches on the header. New writes always produce
+`DHC2`; old envelopes remain readable indefinitely.
+
 Construction (encrypt-then-MAC, NIST SP 800-108 counter mode):
 
     K    = scrypt-derived 32-byte key from the key file
@@ -19,7 +31,7 @@ Construction (encrypt-then-MAC, NIST SP 800-108 counter mode):
         nonce = urandom(16)
         ks_i  = HMAC-SHA256(K_ks, nonce || ctr_be32(i))   for i = 0,1,...
         ct    = plaintext XOR (ks_0 || ks_1 || ...)
-        tag   = HMAC-SHA256(K_mac, nonce || ct)            separate MAC key
+        tag   = HMAC-SHA256(K_mac, header || nonce || ct)   separate MAC key
 
 Keystream construction is HMAC-SHA256 in counter mode (sometimes
 called "HMAC-CTR"). The HMAC is keyed with a domain-separated
@@ -28,9 +40,7 @@ incremented per 32 bytes of output. This is a standard
 construction — the underlying primitive is HMAC-SHA256, a PRF, so
 the keystream is indistinguishable from random to any adversary
 without the key. The authentication tag is computed with a separate
-domain-separated subkey `K_mac` over `(nonce || ct)`.
-
-The on-disk envelope is `HEADER (4) || nonce (16) || ct (n) || tag (32)`.
+domain-separated subkey `K_mac` over `(header || nonce || ct)`.
 
 Threat model:
 
@@ -57,17 +67,22 @@ from pathlib import Path
 
 _KEYSTREAM_BLOCK = 32  # HMAC-SHA256 output size
 
+# v0x01 KDF salt (fixed, kept for backward-compatible reads).
+_SALT_V1 = b"dhc-secrets-v1"
 
-def _derive_keys(master_key: bytes) -> tuple[bytes, bytes]:
+
+def _derive_keys(master_key: bytes, salt: bytes) -> tuple[bytes, bytes]:
     """Derive (keystream_key, mac_key) from the master key.
 
-    Uses scrypt with two distinct labels and a fixed salt. The
-    parameters (`n=2**15, r=8, p=1`) take ~50 ms on a modern CPU;
+    `salt` is the scrypt KDF salt. v0x01 envelopes pass the fixed
+    `b"dhc-secrets-v1"` salt; v0x02 envelopes pass the per-envelope
+    nonce so each secret has a unique KDF input.
+
+    The parameters (`n=2**10, r=8, p=1`) take ~50 ms on a modern CPU;
     secrets.put/get are not on the hot path.
     """
     if len(master_key) != 32:
         raise ValueError("master key must be 32 bytes")
-    salt = b"dhc-secrets-v1"
     enc = hashlib.scrypt(master_key + b"-ks", salt=salt, n=2**10, r=8, p=1, dklen=32)
     mac = hashlib.scrypt(master_key + b"-mac", salt=salt, n=2**10, r=8, p=1, dklen=32)
     return enc, mac
@@ -98,48 +113,91 @@ def _keystream(ks_key: bytes, nonce: bytes, length: int) -> bytes:
 
 NONCE_LEN = 16
 TAG_LEN = 32
-HEADER = b"DHC1"
+
+# v0x01 header (4 ASCII bytes). v0x02 is `DHC2`.
+HEADER_V1 = b"DHC1"
+HEADER_V2 = b"DHC2"
+
+# Public alias: `HEADER` keeps the v1.2.x name; new code should use
+# `HEADER_V1` / `HEADER_V2` directly.
+HEADER = HEADER_V1
 
 
 class SecretEnvelopeError(Exception):
     """Raised when an envelope cannot be decoded or fails the MAC check."""
 
 
-def seal(plaintext: bytes, master_key: bytes) -> bytes:
-    """Encrypt-then-MAC a plaintext under the master key.
+def _seal_with(plaintext: bytes, master_key: bytes, header: bytes) -> bytes:
+    """Internal: encrypt under a chosen header.
 
-    Returns: HEADER (4) || nonce (16) || ciphertext (n) || tag (32)
+    The MAC is computed over `header || nonce || ct` so the header
+    is bound to the tag.
     """
     if not isinstance(plaintext, (bytes, bytearray)):
         raise TypeError("plaintext must be bytes")
     if not isinstance(master_key, (bytes, bytearray)) or len(master_key) != 32:
         raise ValueError("master_key must be 32 bytes")
-    ks_key, mac_key = _derive_keys(bytes(master_key))
     nonce = _secrets.token_bytes(NONCE_LEN)
+    if header == HEADER_V2:
+        salt = nonce
+    elif header == HEADER_V1:
+        salt = _SALT_V1
+    else:
+        raise ValueError(f"unsupported envelope header: {header!r}")
+    ks_key, mac_key = _derive_keys(bytes(master_key), salt)
     ks = _keystream(ks_key, nonce, len(plaintext))
     ct = bytes(a ^ b for a, b in zip(plaintext, ks))
-    tag = hmac.new(mac_key, HEADER + nonce + ct, hashlib.sha256).digest()
-    return HEADER + nonce + ct + tag
+    tag = hmac.new(mac_key, header + nonce + ct, hashlib.sha256).digest()
+    return header + nonce + ct + tag
+
+
+def seal(plaintext: bytes, master_key: bytes) -> bytes:
+    """Encrypt-then-MAC a plaintext under the master key.
+
+    Returns: HEADER (4) || nonce (16) || ciphertext (n) || tag (32)
+
+    Since v1.3.1 the header is `DHC2` (per-envelope nonce as the
+    scrypt KDF salt). v1.2.0 / v1.3.0 `DHC1` envelopes are still
+    readable via `open_envelope`.
+    """
+    return _seal_with(plaintext, master_key, HEADER_V2)
 
 
 def open_envelope(envelope: bytes, master_key: bytes) -> bytes:
     """Open an envelope produced by `seal`. Verifies the tag in
     constant time and returns the plaintext. Raises
     `SecretEnvelopeError` on any failure.
+
+    Dispatches on the 4-byte header:
+
+    - `DHC1` (v0x01): legacy fixed-salt envelopes from v1.2.0/v1.3.0.
+    - `DHC2` (v0x02): v1.3.1+ envelopes with a per-envelope nonce
+      as the scrypt salt.
+
+    Unknown headers raise `SecretEnvelopeError` (we do NOT fall
+    through; this is the v0x03-onwards rejection path).
     """
     if not isinstance(envelope, (bytes, bytearray)):
         raise TypeError("envelope must be bytes")
     if not isinstance(master_key, (bytes, bytearray)) or len(master_key) != 32:
         raise ValueError("master_key must be 32 bytes")
-    if len(envelope) < len(HEADER) + NONCE_LEN + TAG_LEN:
+    if len(envelope) < len(HEADER_V1) + NONCE_LEN + TAG_LEN:
         raise SecretEnvelopeError("envelope too short")
-    if not hmac.compare_digest(envelope[: len(HEADER)], HEADER):
-        raise SecretEnvelopeError("bad header")
-    nonce = envelope[len(HEADER) : len(HEADER) + NONCE_LEN]
+    header = bytes(envelope[: len(HEADER_V1)])
+    # Header is always 4 bytes; both v0x01 and v0x02 use the same
+    # 4 + 16 + n + 32 layout, so the nonce/ct/tag offsets are stable.
+    nonce = bytes(envelope[len(HEADER_V1) : len(HEADER_V1) + NONCE_LEN])
     tag = envelope[-TAG_LEN:]
-    ct = envelope[len(HEADER) + NONCE_LEN : -TAG_LEN]
-    ks_key, mac_key = _derive_keys(bytes(master_key))
-    expected_tag = hmac.new(mac_key, HEADER + nonce + ct, hashlib.sha256).digest()
+    ct = envelope[len(HEADER_V1) + NONCE_LEN : -TAG_LEN]
+    if header == HEADER_V1:
+        salt = _SALT_V1
+    elif header == HEADER_V2:
+        # v0x02: the KDF salt is the per-envelope nonce.
+        salt = nonce
+    else:
+        raise SecretEnvelopeError(f"unknown envelope header: {header!r}")
+    ks_key, mac_key = _derive_keys(bytes(master_key), salt)
+    expected_tag = hmac.new(mac_key, header + nonce + ct, hashlib.sha256).digest()
     if not hmac.compare_digest(expected_tag, tag):
         raise SecretEnvelopeError("authentication failed")
     ks = _keystream(ks_key, nonce, len(ct))
@@ -223,21 +281,41 @@ class SecretsService:
             raise ValueError("name must be a non-empty string")
         if not isinstance(value, str):
             raise ValueError("value must be a string")
-        envelope = seal(value.encode("utf-8"), self._key)
+        self.put_raw(name, value.encode("utf-8"))
+
+    def put_raw(self, name: str, value: bytes) -> None:
+        """Encrypt and persist a raw `bytes` value. Used by stores
+        that need to round-trip binary data (e.g. JSON-encoded
+        `ModelConfig` blobs in ADR-0011)."""
+        if not isinstance(name, str) or not name:
+            raise ValueError("name must be a non-empty string")
+        if not isinstance(value, (bytes, bytearray)):
+            raise TypeError("value must be bytes")
+        envelope = seal(bytes(value), self._key)
         record = {"op": "set", "name": name, "blob": base64.b64encode(envelope).decode("ascii")}
         with self._lock:
             with self._log.open("a", encoding="utf-8") as f:
                 f.write(json.dumps(record, separators=(",", ":")) + "\n")
-            self._cache[name] = value.encode("utf-8")
+            self._cache[name] = bytes(value)
 
     def get(self, name: str) -> str | None:
+        raw = self.get_raw(name)
+        return raw.decode("utf-8") if raw is not None else None
+
+    def get_raw(self, name: str) -> bytes | None:
+        """Decrypt and return the raw `bytes` value for `name`,
+        or `None` if the name is missing or tombstoned.
+
+        Used by stores that need binary round-trip (ADR-0011
+        `ModelConfigStore`).
+        """
         with self._lock:
             if name in self._cache:
                 cached = self._cache[name]
-                return cached.decode("utf-8") if cached is not None else None
+                return cached
             self._replay()
             cached = self._cache.get(name)
-            return cached.decode("utf-8") if cached is not None else None
+            return cached
 
     def delete(self, name: str) -> bool:
         with self._lock:
@@ -289,6 +367,8 @@ __all__ = [
     "NONCE_LEN",
     "TAG_LEN",
     "HEADER",
+    "HEADER_V1",
+    "HEADER_V2",
     "SecretEnvelopeError",
     "SecretsService",
     "load_or_create_master_key",

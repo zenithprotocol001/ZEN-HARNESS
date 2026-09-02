@@ -49,6 +49,12 @@ class StreamChunk(BaseModel):
     tool_calls: list[dict] = Field(default_factory=list)
     finish_reason: str | None = None
     raw_index: int = 0
+    # v1.3.1: optional token usage surfaced on the final chunk of
+    # a stream. `None` on intermediate chunks. Shape:
+    # `{"prompt_tokens": int, "completion_tokens": int, "total_tokens": int}`.
+    # Providers that don't return usage (or that return it on a
+    # separate request) leave this as `None`.
+    usage: dict | None = None
 
 
 class BufferOverflow(RuntimeError):
@@ -63,6 +69,7 @@ class LLMStreamAdapter:
         *,
         model_registry: "Any | None" = None,
         secrets_service: "Any | None" = None,
+        config_store: "Any | None" = None,
     ) -> None:
         """v1.2.0 surface. `base_url` and `api_key` are required
         (the mock LLM uses them).
@@ -72,12 +79,18 @@ class LLMStreamAdapter:
         requested model is not the mock, `chat_stream` resolves the
         provider client via the factory in `dhc.integrations` and
         looks up the per-model API key in `secrets_service`.
+
+        v1.3.1 extension: `config_store` enables per-session
+        `ModelConfig` lookups (ADR-0011). The config supplies
+        `temperature` / `max_tokens` / `top_p` to the provider and
+        a `system_prompt` prepended to the messages list.
         """
         self._base_url = base_url.rstrip("/")
         self._api_key = api_key
         self._redacted = self._redact_key(api_key)
         self._model_registry = model_registry
         self._secrets_service = secrets_service
+        self._config_store = config_store
 
     @staticmethod
     def _redact_key(api_key: str) -> str:
@@ -104,6 +117,8 @@ class LLMStreamAdapter:
         self,
         messages: list[dict],
         model: str = _DEFAULT_MODEL,
+        *,
+        session_id: str | None = None,
     ) -> AsyncIterator[StreamChunk]:
         """v1.2.0 chat surface. POSTs an OpenAI-compatible chat
         completions request and yields deltas.
@@ -115,6 +130,12 @@ class LLMStreamAdapter:
         v1.3.0: when the adapter was constructed with both
         `model_registry` and `secrets_service` and `model` is not
         the mock, dispatch to a live provider client.
+
+        v1.3.1: when `session_id` is provided AND a `config_store`
+        was injected, the per-session `ModelConfig` is read and
+        forwarded to the provider (temperature/max_tokens/top_p)
+        and prepended to `messages` as a `system` message if no
+        system message is already present.
         """
         # v1.3.0 dispatch (ADR-0009): if we have a registry + a
         # secrets service, AND the model is not the mock, route to
@@ -126,7 +147,7 @@ class LLMStreamAdapter:
             and model != "mock-llm/default"
             and not model.startswith("mock-")
         ):
-            async for chunk in self._dispatch_live(messages, model):
+            async for chunk in self._dispatch_live(messages, model, session_id):
                 yield chunk
             return
 
@@ -144,7 +165,7 @@ class LLMStreamAdapter:
                     yield chunk
 
     async def _dispatch_live(
-        self, messages: list[dict], model: str
+        self, messages: list[dict], model: str, session_id: str | None
     ) -> AsyncIterator[StreamChunk]:
         """v1.3.0: resolve provider + key, then call the client.
 
@@ -152,9 +173,16 @@ class LLMStreamAdapter:
         on the mock (which we already filtered out). The secrets
         service raises a `KeyError` or returns `None` if the key
         is missing; we surface that as a `ProviderError(status=401)`.
+
+        v1.3.1 (ADR-0011): if a `config_store` is injected and
+        `session_id` is provided, fetch the per-session config and
+        forward `temperature` / `max_tokens` / `top_p` to the
+        provider. A `system_prompt` from the config is prepended
+        to `messages` if no system message is already present.
         """
         from dhc.integrations import provider_client_for
         from dhc.integrations.base import ProviderError
+        from dhc.services.model_config import ModelConfig
 
         registry = self._model_registry
         m = registry.get_model(model)
@@ -175,7 +203,23 @@ class LLMStreamAdapter:
                 model=model,
             )
         client = provider_client_for(m)
-        async for chunk in client.chat_stream(messages, model, api_key):
+        # Per-session config (ADR-0011).
+        cfg = ModelConfig()
+        if self._config_store is not None and session_id:
+            cfg = self._config_store.get_config(session_id)
+        out_messages = list(messages)
+        if cfg.system_prompt and not any(
+            (m.get("role") == "system") for m in out_messages
+        ):
+            out_messages = [{"role": "system", "content": cfg.system_prompt}] + out_messages
+        async for chunk in client.chat_stream(
+            out_messages,
+            model,
+            api_key,
+            temperature=cfg.temperature,
+            max_tokens=cfg.max_tokens,
+            top_p=cfg.top_p,
+        ):
             yield chunk
 
     async def _consume_sse(
@@ -243,11 +287,15 @@ async def apply(ctx: Context, config: dict) -> Callable[[], None]:
     # v1.3.0: optional model registry + secrets service for live dispatch.
     model_registry = (config or {}).get("model_registry")
     secrets_service = (config or {}).get("secrets_service")
+    # v1.3.1: optional config_store for per-session ModelConfig
+    # (ADR-0011).
+    config_store = (config or {}).get("config_store")
     adapter = LLMStreamAdapter(
         base_url=base_url,
         api_key=api_key,
         model_registry=model_registry,
         secrets_service=secrets_service,
+        config_store=config_store,
     )
     ctx.provide("llm", adapter)
 

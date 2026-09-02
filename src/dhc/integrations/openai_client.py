@@ -21,8 +21,6 @@ from dhc.integrations.base import LLMProvider, ProviderError, RetryConfig
 from dhc.modules.c7_llm_stream_adapter.service import StreamChunk
 
 _OPENAI_URL = "https://api.openai.com/v1/chat/completions"
-_DEFAULT_TEMPERATURE = 0.7
-_DEFAULT_MAX_TOKENS = 4096
 
 
 class OpenAIClient(LLMProvider):
@@ -40,15 +38,30 @@ class OpenAIClient(LLMProvider):
         model: str,
         api_key: str,
         retry_config: RetryConfig | None = None,
+        *,
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+        top_p: float | None = None,
     ) -> AsyncIterator[StreamChunk]:
         rc = retry_config or RetryConfig()
-        body = {
+        body: dict = {
             "model": model,
             "messages": list(messages),
             "stream": True,
-            "temperature": _DEFAULT_TEMPERATURE,
-            "max_tokens": _DEFAULT_MAX_TOKENS,
+            # v1.3.1: ask OpenAI to include the usage block on the
+            # terminating chunk. The OpenAI parser surfaces it as
+            # a `StreamChunk` with `usage` populated.
+            "stream_options": {"include_usage": True},
         }
+        # v1.3.1 (ADR-0011): only include knobs when explicitly
+        # set; `None` means "use the provider default" (which we
+        # leave unspecified rather than hard-code).
+        if temperature is not None:
+            body["temperature"] = temperature
+        if max_tokens is not None:
+            body["max_tokens"] = max_tokens
+        if top_p is not None:
+            body["top_p"] = top_p
         headers = {
             "Content-Type": "application/json",
             "Authorization": f"Bearer {api_key}",
@@ -115,6 +128,12 @@ async def _consume_openai_sse(resp: httpx.Response) -> AsyncIterator[StreamChunk
     """Parse OpenAI SSE. Each event line is `data: {json}` or
     `data: [DONE]`. Deltas carry `choices[0].delta.content` and
     optionally `choices[0].delta.tool_calls`.
+
+    v1.3.1: when the request body includes
+    `stream_options.include_usage` (which the live OpenAI client
+    sets), the final chunk has an empty `choices` array and a
+    `usage` object. We surface it as a terminating `StreamChunk`
+    with `delta=""` and `usage` populated.
     """
     buffer = b""
     index = 0
@@ -137,6 +156,23 @@ async def _consume_openai_sse(resp: httpx.Response) -> AsyncIterator[StreamChunk
                         provider="openai",
                     ) from exc
                 choices = obj.get("choices") or []
+                usage = obj.get("usage")
+                # If the server returned usage in a choices-less
+                # chunk (the v1.3.1 path), surface it as a
+                # terminating chunk.
+                if not choices and usage:
+                    yield StreamChunk(
+                        delta="",
+                        finish_reason="stop",
+                        raw_index=index,
+                        usage={
+                            "prompt_tokens": int(usage.get("prompt_tokens", 0)),
+                            "completion_tokens": int(usage.get("completion_tokens", 0)),
+                            "total_tokens": int(usage.get("total_tokens", 0)),
+                        },
+                    )
+                    index += 1
+                    continue
                 if not choices:
                     continue
                 choice = choices[0]

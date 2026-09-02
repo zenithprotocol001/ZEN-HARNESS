@@ -83,12 +83,21 @@ class LLMProvider(ABC):
         model: str,
         api_key: str,
         retry_config: RetryConfig | None = None,
+        *,
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+        top_p: float | None = None,
     ) -> AsyncIterator[StreamChunk]:
         """Stream chat completion.
 
         `messages` is the OpenAI shape ([{role, content}, ...]).
         `model` is the full model id (e.g. "openai/gpt-4o-mini").
         `api_key` is the per-model secret value.
+
+        v1.3.1 (ADR-0011) adds three optional knobs:
+        `temperature`, `max_tokens`, `top_p`. `None` means
+        "use the provider's default"; concrete clients should
+        omit the field from the request body when `None`.
 
         Yields `StreamChunk` instances. The caller infers "done"
         from stream end. Must NOT raise inside the iterator for

@@ -683,6 +683,74 @@ async def _api_sessions_delete(request: web.Request) -> web.Response:
     return web.Response(status=204, headers=_security_headers())
 
 
+# ---------- /api/sessions/{id}/config (ADR-0011) ----------
+
+
+async def _api_sessions_get_config(request: web.Request) -> web.Response:
+    """Return the `ModelConfig` for `session_id` as JSON.
+
+    A missing or unreadable config returns a fresh `ModelConfig()`
+    (defaults); the endpoint never 404s because "no config set"
+    is a valid state.
+    """
+    web_core: "GuiWebCore | None" = request.app.get("web_core")  # type: ignore[attr-defined]
+    if web_core is None or web_core.model_config_store is None:
+        return web.json_response(
+            {"error": "model_config_store not configured"},
+            status=503,
+            headers=_security_headers(),
+        )
+    sid = request.match_info.get("session_id", "")
+    if not sid:
+        return web.json_response(
+            {"error": "missing session_id"}, status=400, headers=_security_headers()
+        )
+    cfg = web_core.model_config_store.get_config(sid)
+    return web.json_response(cfg.to_dict(), headers=_security_headers())
+
+
+async def _api_sessions_set_config(request: web.Request) -> web.Response:
+    """Persist the `ModelConfig` for `session_id`.
+
+    Body is the JSON config object:
+    `{"temperature": float, "max_tokens": int, "top_p": float, "system_prompt": str}`.
+    Validation lives in `ModelConfig.__post_init__`; bad values
+    yield a 400.
+    """
+    web_core: "GuiWebCore | None" = request.app.get("web_core")  # type: ignore[attr-defined]
+    if web_core is None or web_core.model_config_store is None:
+        return web.json_response(
+            {"error": "model_config_store not configured"},
+            status=503,
+            headers=_security_headers(),
+        )
+    sid = request.match_info.get("session_id", "")
+    if not sid:
+        return web.json_response(
+            {"error": "missing session_id"}, status=400, headers=_security_headers()
+        )
+    try:
+        body = await request.json() if request.body_exists else {}
+    except Exception as exc:  # noqa: BLE001
+        return web.json_response(
+            {"error": f"invalid json: {exc}"}, status=400, headers=_security_headers()
+        )
+    if not isinstance(body, dict):
+        body = {}
+    from dhc.services.model_config import ModelConfig  # local import: avoid C1 → C7 cycle
+
+    try:
+        cfg = ModelConfig.from_dict(body)
+    except (TypeError, ValueError) as exc:
+        return web.json_response(
+            {"error": f"invalid config: {exc}"},
+            status=400,
+            headers=_security_headers(),
+        )
+    web_core.model_config_store.set_config(sid, cfg)
+    return web.Response(status=204, headers=_security_headers())
+
+
 async def _api_sessions_post_message(request: web.Request) -> web.Response:
     """Append a user message to a session and synchronously stream
     the LLM reply through C7, then save the assistant turn.
@@ -729,7 +797,9 @@ async def _api_sessions_post_message(request: web.Request) -> web.Response:
     messages = [{"role": m["role"], "content": m.get("content", "")} for m in s.messages]
     deltas: list[str] = []
     try:
-        async for chunk in adapter.chat_stream(messages=messages, model=model):
+        # v1.3.1: pass session_id so C7 can look up the per-session
+        # ModelConfig (ADR-0011).
+        async for chunk in adapter.chat_stream(messages=messages, model=model, session_id=sid):
             deltas.append(chunk.delta or "")
     except Exception as exc:  # noqa: BLE001
         # Log the error but keep the user message saved.
@@ -876,8 +946,15 @@ async def _ws_chat_handler_impl(request: web.Request) -> web.WebSocketResponse:
         try:
             t0 = int(time.time() * 1000)
             completion_tokens = 0
+            prompt_tokens = 0
             assistant_text_parts: list[str] = []
-            async for chunk in adapter.chat_stream(messages=messages, model=s.model or "mock-default"):
+            # v1.3.1: pass session_id so C7 can look up the
+            # per-session ModelConfig (ADR-0011) and apply the
+            # configured temperature/max_tokens/top_p + system
+            # prompt before dispatching to the provider.
+            async for chunk in adapter.chat_stream(
+                messages=messages, model=s.model or "mock-default", session_id=sid
+            ):
                 if chunk.delta:
                     await send_frame({
                         "type": "chat.delta",
@@ -892,18 +969,25 @@ async def _ws_chat_handler_impl(request: web.Request) -> web.WebSocketResponse:
                         "session_id": sid,
                         "tool_calls": chunk.tool_calls,
                     })
+                # v1.3.1: if the provider returned a usage block on
+                # the terminating chunk, prefer it over the
+                # char/4 estimate. Mock LLM never sets usage; live
+                # providers (OpenAI/Anthropic/OpenRouter) do.
+                if chunk.usage:
+                    prompt_tokens = int(chunk.usage.get("prompt_tokens") or 0)
+                    completion_tokens = int(chunk.usage.get("completion_tokens") or completion_tokens)
                 if chunk.finish_reason:
                     break
             t1 = int(time.time() * 1000)
             # Persist the assistant turn so the session log is complete.
             sm.append_message(
                 sid, "assistant", "".join(assistant_text_parts),
-                tokens={"prompt": 0, "completion": completion_tokens},
+                tokens={"prompt": prompt_tokens, "completion": completion_tokens},
             )
             await send_frame({
                 "type": "chat.done",
                 "session_id": sid,
-                "tokens": {"prompt": 0, "completion": completion_tokens},
+                "tokens": {"prompt": prompt_tokens, "completion": completion_tokens},
                 "latency_ms": t1 - t0,
             })
         except Exception as exc:  # noqa: BLE001
@@ -951,8 +1035,15 @@ class GuiWebCore:
         self.secrets_service: Any = None
         if secrets_dir is not None:
             from dhc.cordis.secrets import SecretsService
+            from dhc.services.model_config import ModelConfigStore
 
             self.secrets_service = SecretsService(Path(secrets_dir))
+            # v1.3.1 (ADR-0011): per-session model config store.
+            # Backed by the same `SecretsService`; uses raw bytes
+            # so the JSON encoding round-trips losslessly.
+            self.model_config_store: Any = ModelConfigStore(self.secrets_service)
+        else:
+            self.model_config_store = None
         # v1.3.0: model registry. Always constructed (it's a pure
         # in-memory hardcoded list) so /api/models works without
         # external configuration. Per ADR-0006, dynamic discovery
@@ -985,6 +1076,8 @@ class GuiWebCore:
         self.app.router.add_patch("/api/sessions/{session_id}", _api_sessions_patch)
         self.app.router.add_delete("/api/sessions/{session_id}", _api_sessions_delete)
         self.app.router.add_post("/api/sessions/{session_id}/messages", _api_sessions_post_message)
+        self.app.router.add_get("/api/sessions/{session_id}/config", _api_sessions_get_config)
+        self.app.router.add_post("/api/sessions/{session_id}/config", _api_sessions_set_config)
         self.app.router.add_get("/api/secrets", _api_secrets_list)
         self.app.router.add_put("/api/secrets/{name}", _api_secrets_put)
         self.app.router.add_delete("/api/secrets/{name}", _api_secrets_delete)
