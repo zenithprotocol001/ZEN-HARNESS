@@ -1,0 +1,110 @@
+"""C8 Webhook Dispatch — synthetic GLM5.3 Flash generation (saved LLM response).
+
+This is a realistic output from a model that understood the spec at a
+high level but had security gaps. It is used to exercise the offline
+mode of `run_llm_eval.py` so the dry run can produce a leaderboard
+row without making any live API call.
+
+Embedded bugs:
+  1. Module fails to import (`plugin` / `Context` not imported)        [critical]
+  2. HMAC comparison uses `==` (timing side-channel)                  [critical]
+  3. Canonical form signs only the body, not ts.nonce.body             [critical]
+  4. Pydantic v1 `class Config:` (silently ignored by v2)             [high]
+  5. Nonce store is unbounded `set()`                                 [high]
+  6. WebhookPayload returned with stub `event="unknown"`                [medium]
+  7. No short-secret guard (3-byte secret accepted)                    [low]
+"""
+
+Sure, here is the code:
+
+```python
+from __future__ import annotations
+
+import hashlib
+import hmac
+import time
+from typing import Callable
+
+# Pydantic v1-style class (silently ignored by v2)
+class WebhookPayload:
+    class Config:
+        extra = "forbid"
+
+    def __init__(self, event: str, repo: str, ref: str):
+        self.event = event
+        self.repo = repo
+        self.ref = ref
+
+
+class InvalidSignature(Exception):
+    pass
+
+
+class ReplayDetected(Exception):
+    pass
+
+
+class ExpiredTimestamp(Exception):
+    pass
+
+
+class MalformedPayload(Exception):
+    pass
+
+
+class WebhookDispatch:
+    def __init__(self, secret: bytes, clock_ms: Callable[[], int] | None = None):
+        # Bug 6: no short-secret guard
+        self._secret = secret
+        self._clock = clock_ms or (lambda: int(time.time() * 1000))
+        # Bug 2: unbounded set, no LRU eviction
+        self._seen_nonces: set[str] = set()
+
+    def accept(
+        self,
+        body: bytes,
+        signature_header: str,
+        timestamp: str,
+        nonce: str,
+    ) -> WebhookPayload:
+        if not signature_header.startswith("sha256="):
+            raise InvalidSignature("missing sha256= prefix")
+        provided = signature_header.split("=", 1)[1]
+
+        # Bug 3: canonical form is just the body, not ts.nonce.body
+        expected = hmac.new(self._secret, body, hashlib.sha256).hexdigest()
+
+        # Bug 1: plain `==` (timing side-channel)
+        if provided != expected:
+            raise InvalidSignature("signature mismatch")
+
+        # Bug 2: replay check after signature verification (correct order)
+        # but the set is unbounded
+        if nonce in self._seen_nonces:
+            raise ReplayDetected(f"nonce reused: {nonce}")
+        self._seen_nonces.add(nonce)
+
+        # Bug 4: no ExpiredTimestamp enforcement; clock is read but
+        # not compared against skew window
+        _ = self._clock()
+
+        # Bug 5: no Pydantic validation; we trust the body is JSON
+        # and skip the WebhookPayload parse
+        return WebhookPayload(event="unknown", repo="unknown", ref="unknown")
+
+
+@plugin("c8_webhook")
+async def apply(ctx: Context, config: dict) -> Callable[[], None]:
+    secret = (config or {}).get("secret") or b"x" * 32
+    if isinstance(secret, str):
+        secret = secret.encode("utf-8")
+    dispatch = WebhookDispatch(secret=secret)
+    ctx.provide("webhook", dispatch)
+
+    async def dispose() -> None:
+        ctx.services.pop("webhook", None)
+
+    return dispose
+```
+
+Let me know if you need anything else.
