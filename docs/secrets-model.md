@@ -1,9 +1,26 @@
-# Secrets at-rest envelope (v1.2.0)
+# Secrets at-rest envelope
 
-The C1 GuiWebCore stores user-supplied API keys (used by v1.3.0
+The C1 GuiWebCore stores user-supplied API keys (used by v1.3.0+
 live LLM providers) in an append-only JSONL log encrypted under
 a per-user master key. This document describes the construction,
 the threat model, and the operational checklist.
+
+## Envelope versions
+
+| Version | Header | KDF salt | Status |
+|---|---|---|---|
+| v0x01 | `DHC1` | fixed `b"dhc-secrets-v1"` | v1.2.0 / v1.3.0 reads + writes |
+| v0x02 | `DHC2` | per-envelope nonce (16 bytes) | v1.3.1 reads + writes; v1.3.0 still reads |
+
+The envelope layout is the same for both versions:
+
+```
+HEADER (4) || nonce (16) || ciphertext (n) || tag (32)
+```
+
+The only difference is the 4-byte header, which the reader uses to
+pick the KDF, and the KDF's salt (fixed vs. per-envelope). See
+`docs/adr/0010-per-secret-nonce.md` for the rationale.
 
 ## Threat model
 
@@ -16,12 +33,12 @@ the threat model, and the operational checklist.
 
 ## Construction (encrypt-then-MAC)
 
-For each write:
+For v0x01 (`DHC1`) writes:
 
 ```
 K        = 32-byte master key from ~/.dhc/secrets/secrets.key (mode 0o600)
-K_ks     = scrypt(K, "dhc-secrets-v1", salt, label="-ks",  n=2^10, r=8, p=1, dklen=32)
-K_mac    = scrypt(K, "dhc-secrets-v1", salt, label="-mac", n=2^10, r=8, p=1, dklen=32)
+K_ks     = scrypt(K + b"-ks",  salt="dhc-secrets-v1", n=2^10, r=8, p=1, dklen=32)
+K_mac    = scrypt(K + b"-mac", salt="dhc-secrets-v1", n=2^10, r=8, p=1, dklen=32)
 nonce    = secrets.token_bytes(16)
 ks_i     = HMAC-SHA256(K_ks,  nonce || ctr_be32(i))   for i = 0, 1, 2, ...
 ct       = plaintext XOR (ks_0 || ks_1 || ...)
@@ -29,33 +46,40 @@ tag      = HMAC-SHA256(K_mac, "DHC1" || nonce || ct)
 envelope = "DHC1" || nonce || ct || tag
 ```
 
+For v0x02 (`DHC2`) writes (v1.3.1+):
+
+```
+K        = 32-byte master key from ~/.dhc/secrets/secrets.key (mode 0o600)
+K_ks     = scrypt(K + b"-ks",  salt=nonce, n=2^10, r=8, p=1, dklen=32)
+K_mac    = scrypt(K + b"-mac", salt=nonce, n=2^10, r=8, p=1, dklen=32)
+nonce    = secrets.token_bytes(16)
+ks_i     = HMAC-SHA256(K_ks,  nonce || ctr_be32(i))   for i = 0, 1, 2, ...
+ct       = plaintext XOR (ks_0 || ks_1 || ...)
+tag      = HMAC-SHA256(K_mac, "DHC2" || nonce || ct)
+envelope = "DHC2" || nonce || ct || tag
+```
+
+The only difference is the header and the KDF salt. v0x02 is a
+strict security improvement over v0x01 (unique scrypt salt per
+envelope); the on-disk size and tag scheme are identical.
+
 The envelope is then base64-encoded and appended to the log.
 
 ### Salt strategy
 
-v1.2.x uses a fixed label `b"dhc-secrets-v1"` and a fixed salt
-when deriving the keystream and MAC subkeys from the master key.
-This is acceptable for the current single-tenant threat model:
+v1.2.x used a fixed scrypt salt `b"dhc-secrets-v1"` to derive
+`K_ks` and `K_mac` from the master key. The keystream nonce
+(`secrets.token_bytes(16)`) was already per-write random, so
+identical plaintexts encrypted under the same master key
+produced different ciphertexts, but the underlying KDF inputs
+were identical for every envelope (which leaked equality
+information to anyone who could read the log without the key).
 
-- Master keys are randomly generated per installation at
-  `~/.dhc/secrets/secrets.key` (mode 0o600); the fixed salt does
-  not reduce per-installation entropy.
-- The v1.2.x threat model is single-user / single-host. Two users
-  on the same host never share a master key.
-- Cross-installation or cross-tenant comparison of ciphertexts is
-  out of scope (the loopback bind is the trust boundary).
-
-The keystream nonce (`secrets.token_bytes(16)`) is **per-write**
-random, so identical plaintexts encrypted under the same master
-key still produce different ciphertexts. Two writes of the same
-`openai` API key produce two different envelopes.
-
-v1.3.0 will introduce per-secret random nonces (12 bytes)
-**inside** the envelope — stored alongside the ciphertext — to
-provide per-secret confidentiality even when the master key is
-reused across many writes. The envelope format version (`0x01`)
-reserves 16 bytes of headroom for this nonce without breaking
-on-disk compatibility.
+v1.3.1 (ADR-0010) replaces the fixed salt with the per-envelope
+nonce. Every secret now uses a unique scrypt salt, so the
+keystream and MAC subkeys are also unique. The envelope header
+bumps from `DHC1` to `DHC2`; `open_envelope` dispatches on the
+header, so `DHC1` envelopes remain readable indefinitely.
 
 ### Why HMAC-CTR for the keystream?
 
@@ -162,8 +186,12 @@ When deploying v1.2.0 in a new environment:
    started the C1 process.
 4. To rotate the key, you must re-encrypt every record: read
    each name with the old key, write it back with the new key,
-   and atomically replace `secrets.key`. The v1.2.0 release
-   does not ship a rotation tool; it is left to v1.3.0.
+   and atomically replace `secrets.key`. v1.3.1 does not ship a
+   rotation tool; it is left to v1.4.0.
+5. New secrets written after upgrading to v1.3.1 are stored as
+   `DHC2` envelopes. Existing `DHC1` secrets remain readable
+   forever; re-storing a name will upgrade it to `DHC2` on the
+   next `PUT /api/secrets/{name}`.
 
 ## Why not just use the OS keychain?
 

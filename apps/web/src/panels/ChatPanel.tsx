@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ChatFrame, Message, Session, SessionSummary, ToolCall } from "../types/chat";
 import { Markdown, ToolResult } from "../components/Markdown";
-import { ModelSelect } from "../components/ModelSelect";
+import { ModelSelect, ModelOption } from "../components/ModelSelect";
+import { SettingsModal } from "../components/SettingsModal";
+import { ModelConfigMenu } from "../components/ModelConfigMenu";
 import { SessionList } from "./SessionList";
 import { SearchOverlay } from "../components/SearchOverlay";
 
@@ -38,6 +40,9 @@ export function ChatPanel(props: {
   const [searchOpen, setSearchOpen] = useState<boolean>(false);
   const [searchQuery, setSearchQuery] = useState<string>("");
   const [llmOk, setLlmOk] = useState<boolean | null>(null);
+  const [settingsOpen, setSettingsOpen] = useState<boolean>(false);
+  const [configOpen, setConfigOpen] = useState<boolean>(false);
+  const [models, setModels] = useState<ModelOption[]>([]);
   const wsRef = useRef<WebSocket | null>(null);
 
   // Refresh the session list (with optional search filter).
@@ -141,13 +146,21 @@ export function ChatPanel(props: {
   const streamingRef = useRef<string>("");
   useEffect(() => { streamingRef.current = streaming; }, [streaming]);
 
-  // Initial load: list + LLM health.
+  // Initial load: list + LLM health + model registry.
   useEffect(() => {
     void refreshSessions("");
     fetch("/api/llm/health")
       .then((r) => r.json())
       .then((b) => setLlmOk(Boolean(b.ok)))
       .catch(() => setLlmOk(false));
+    fetch("/api/models", { credentials: "same-origin" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((b: { models?: ModelOption[] } | null) => {
+        if (b && Array.isArray(b.models)) setModels(b.models);
+      })
+      .catch(() => {
+        // /api/models may 404 in older builds; ignore.
+      });
   }, [refreshSessions]);
 
   // Reload the active session when activeId changes.
@@ -293,12 +306,30 @@ export function ChatPanel(props: {
         >
           <strong>{active?.title || "No session selected"}</strong>
           {active && (
-            <div style={{ marginLeft: "auto" }}>
+            <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 8 }}>
               <ModelSelect
                 value={active.model || "mock-llm/default"}
                 onChange={(modelId) => setSessionModel(active.id, modelId)}
                 disabled={wsState === "connecting"}
               />
+              {active && (
+                <button
+                  type="button"
+                  className="chat-config-button"
+                  onClick={() => setConfigOpen(true)}
+                  aria-label="Open model configuration"
+                >
+                  ⚙ Config
+                </button>
+              )}
+              <button
+                type="button"
+                className="chat-settings-button"
+                onClick={() => setSettingsOpen(true)}
+                aria-label="Open settings"
+              >
+                ⚙ Keys
+              </button>
             </div>
           )}
           {llmOk === false && (
@@ -340,6 +371,18 @@ export function ChatPanel(props: {
         }}
         onClose={() => setSearchOpen(false)}
       />
+      <SettingsModal
+        isOpen={settingsOpen}
+        onClose={() => setSettingsOpen(false)}
+        models={models}
+      />
+      {active && (
+        <ModelConfigMenu
+          sessionID={active.id}
+          isOpen={configOpen}
+          onClose={() => setConfigOpen(false)}
+        />
+      )}
     </div>
   );
 }

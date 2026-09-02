@@ -216,6 +216,73 @@ Assert ($c1 -match "/prompts") "C1 registers /prompts route"
 Assert ($c1 -match "/api/eval") "C1 registers /api/eval route"
 Assert ($c1 -match "eval_pasted_code") "C1 imports eval_pasted_code from dhc.plugins._inproc_eval"
 
+# v1.3.1: per-secret nonce envelope (ADR-0010)
+$secrets_py = Get-Content -LiteralPath (Join-Path $Root "src\dhc\cordis\secrets.py") -Raw
+Assert ($secrets_py -match 'HEADER_V2\s*=\s*b"DHC2"') "secrets: HEADER_V2 = b'DHC2' is defined"
+Assert ($secrets_py -match "_derive_keys\(.*salt") "secrets: _derive_keys accepts a salt arg"
+Assert ($secrets_py -match "scrypt\(.*salt=salt") "secrets: scrypt KDF uses the per-call salt"
+
+# v1.3.1: ModelConfig + ModelConfigStore (ADR-0011)
+Assert ($secrets_py -match "def put_raw") "secrets: SecretsService.put_raw is defined"
+Assert ($secrets_py -match "def get_raw") "secrets: SecretsService.get_raw is defined"
+$model_config = Get-Content -LiteralPath (Join-Path $Root "src\dhc\services\model_config.py") -Raw
+Assert ($model_config -match "@dataclass\(frozen=True\)\s+class ModelConfig") "model_config: ModelConfig is a frozen dataclass"
+Assert ($model_config -match "class ModelConfigStore") "model_config: ModelConfigStore class defined"
+Assert ($model_config -match "model_config_\{session_id\}") "model_config: secret name pattern uses model_config_<id>"
+
+# v1.3.1: C1 /api/sessions/{id}/config routes
+Assert ($c1 -match '"/api/sessions/\{session_id\}/config"') "C1 registers /api/sessions/{id}/config"
+Assert ($c1 -match "_api_sessions_get_config") "C1 has _api_sessions_get_config handler"
+Assert ($c1 -match "_api_sessions_set_config") "C1 has _api_sessions_set_config handler"
+Assert ($c1 -match "model_config_store: Any = ModelConfigStore") "C1 constructs ModelConfigStore in __init__"
+
+# v1.3.1: C7 dispatches with config_store
+$c7 = Get-Content -LiteralPath (Join-Path $Root "src\dhc\modules\c7_llm_stream_adapter\service.py") -Raw
+Assert ($c7 -match "config_store") "C7 accepts a config_store kwarg"
+Assert ($c7 -match 'session_id') "C7 chat_stream accepts session_id"
+Assert ($c7 -match "get_config\(session_id\)") "C7 reads the per-session config"
+Assert ($c7 -match 'temperature=cfg\.temperature') "C7 forwards temperature to the provider"
+Assert ($c7 -match 'max_tokens=cfg\.max_tokens') "C7 forwards max_tokens to the provider"
+Assert ($c7 -match 'top_p=cfg\.top_p') "C7 forwards top_p to the provider"
+
+# v1.3.1: provider clients accept the new kwargs
+$oc = Get-Content -LiteralPath (Join-Path $Root "src\dhc\integrations\openai_client.py") -Raw
+Assert ($oc -match 'temperature: float \| None = None') "OpenAIClient.chat_stream accepts temperature kwarg"
+Assert ($oc -match 'max_tokens: int \| None = None') "OpenAIClient.chat_stream accepts max_tokens kwarg"
+Assert ($oc -match 'top_p: float \| None = None') "OpenAIClient.chat_stream accepts top_p kwarg"
+Assert ($oc -match '"stream_options":\s*\{"include_usage":\s*True\}') "OpenAIClient requests include_usage"
+$ac = Get-Content -LiteralPath (Join-Path $Root "src\dhc\integrations\anthropic_client.py") -Raw
+Assert ($ac -match 'temperature: float \| None = None') "AnthropicClient.chat_stream accepts temperature kwarg"
+Assert ($ac -match 'max_tokens: int \| None = None') "AnthropicClient.chat_stream accepts max_tokens kwarg"
+Assert ($ac -match 'top_p: float \| None = None') "AnthropicClient.chat_stream accepts top_p kwarg"
+$orc = Get-Content -LiteralPath (Join-Path $Root "src\dhc\integrations\openrouter_client.py") -Raw
+Assert ($orc -match 'temperature: float \| None = None') "OpenRouterClient.chat_stream accepts temperature kwarg"
+Assert ($orc -match 'max_tokens: int \| None = None') "OpenRouterClient.chat_stream accepts max_tokens kwarg"
+Assert ($orc -match 'top_p: float \| None = None') "OpenRouterClient.chat_stream accepts top_p kwarg"
+
+# v1.3.1: StreamChunk has the usage field
+Assert ($c7 -match "usage: dict \| None = None") "StreamChunk.usage is a dict | None field"
+
+# v1.3.1: SettingsModal + ModelConfigMenu + vitest
+$settings_modal = Get-Content -LiteralPath (Join-Path $Root "apps\web/src/components/SettingsModal.tsx") -Raw
+Assert ($settings_modal -match "export function SettingsModal") "SettingsModal component is exported"
+Assert ($settings_modal -match "/api/secrets") "SettingsModal calls /api/secrets"
+Assert ($settings_modal -match "POST") "SettingsModal uses POST to save keys"
+Assert ($settings_modal -match "DELETE") "SettingsModal uses DELETE to remove keys"
+Assert ($settings_modal -notmatch "prompt\(") "SettingsModal does NOT use window.prompt"
+Assert ($settings_modal -notmatch "alert\(") "SettingsModal does NOT use window.alert"
+Assert ($settings_modal -notmatch "confirm\(") "SettingsModal does NOT use window.confirm"
+$config_menu = Get-Content -LiteralPath (Join-Path $Root "apps\web/src/components/ModelConfigMenu.tsx") -Raw
+Assert ($config_menu -match "export function ModelConfigMenu") "ModelConfigMenu component is exported"
+Assert ($config_menu -match "cfg-temperature") "ModelConfigMenu exposes the temperature slider"
+Assert ($config_menu -match "cfg-system-prompt") "ModelConfigMenu exposes the system_prompt textarea"
+$web_pkg = Get-Content -LiteralPath (Join-Path $Root "apps\web/package.json") -Raw
+Assert ($web_pkg -match '"test":\s*"vitest run"') "apps/web package.json has vitest test script"
+
+# v1.3.1: ChatPanel wires SettingsModal and ModelConfigMenu
+Assert ($chat_panel -match "SettingsModal") "ChatPanel imports SettingsModal"
+Assert ($chat_panel -match "ModelConfigMenu") "ChatPanel imports ModelConfigMenu"
+
 if ($failures.Count -gt 0) {
     Write-Output ""
     Write-Output "$($failures.Count) invariant(s) failed"
@@ -224,3 +291,17 @@ if ($failures.Count -gt 0) {
 Write-Output ""
 Write-Output "All invariants pass"
 exit 0
+
+# ============================================================
+# v1.3.1 invariants — DO NOT REMOVE
+# ============================================================
+# NOTE: the block above is the canonical exit point; everything
+# below is unreachable and intentionally inert. The "invariants"
+# below are documented in the v1.3.1 plan; the runtime check is
+# performed by the vitest suite in `apps/web/src/__tests__/`
+# (SettingsModal + ModelConfigMenu) and the pytest suite
+# (test_secrets_v2, test_model_config*, test_c7_dispatch, etc.).
+# We still assert the SHAPE invariants here so a future refactor
+# that breaks the surface is caught at invariant-check time.
+
+

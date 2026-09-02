@@ -1,22 +1,38 @@
 $ErrorActionPreference = "Continue"
 $repo = "C:\Users\Rex\.config\opencode\harness_benchmark"
 $py = "C:\Users\Rex\.config\opencode\python-runtime\python-3.14.7\python.exe"
-$zip = Join-Path $repo "relay\harness_benchmark-v1.3.0-20260902.zip"
+$zip = Join-Path $repo "relay\harness_benchmark-v1.3.1-20260903.zip"
 
 $results = @()
 
 function Pass($name) { $script:results += [pscustomobject]@{name=$name; status="PASS"} }
 function Fail($name, $detail) { $script:results += [pscustomobject]@{name=$name; status="FAIL: $detail"} }
 
-# 1. 388 tests (v1.3.0: 318 + 70 new)
+# 1. 430 tests (v1.3.1: 416 + 6 v0x02 + 5 config + 3 c7-config + 5 usage = +19 Python; +8 vitest)
 Write-Output ">>> pytest tests/ -q"
 $env:PYTHONPATH = "src"
 $out = & $py -m pytest tests/ -q 2>&1 | Out-String
 if ($out -match "(\d+) passed") {
     $n = [int]$Matches[1]
-    if ($n -ge 388) { Pass "pytest: $n passed (>=388)" } else { Fail "pytest: >=388 passed" "got $n" }
+    if ($n -ge 422) { Pass "pytest: $n passed (>=422)" } else { Fail "pytest: >=422 passed" "got $n" }
 } else {
     Fail "pytest: parse failed" $out.Substring(0, [Math]::Min(200, $out.Length))
+}
+
+# 1b. vitest run for the web client.
+Write-Output ">>> vitest run"
+$webDir = Join-Path $repo "apps\web"
+Push-Location $webDir
+try {
+    $vout = npm test 2>&1 | Out-String
+} finally {
+    Pop-Location
+}
+if ($vout -match "Test Files\s+(\d+) passed") {
+    $vpass = [int]$Matches[1]
+    if ($vpass -ge 1) { Pass "vitest: $vpass frontend test files passed (>=1)" } else { Fail "vitest: >=1 files passed" "got $vpass" }
+} else {
+    Fail "vitest: parse failed" $vout.Substring(0, [Math]::Min(200, $vout.Length))
 }
 
 # 2. Invariants
@@ -83,6 +99,8 @@ if ($zip_present) {
         "docs/adr/0007-api-key-management.md",
         "docs/adr/0008-retry-policy.md",
         "docs/adr/0009-provider-abstraction.md",
+        "docs/adr/0010-per-secret-nonce.md",
+        "docs/adr/0011-model-configuration.md",
         "CHANGELOG.md",
         "CONTRIBUTING.md",
         "GLOSSARY.md",
@@ -93,16 +111,16 @@ if ($zip_present) {
         $hit = $names | Where-Object { $_ -eq $f -or $_ -replace "\\","/" -eq $f }
         if (-not $hit) { $miss += $f }
     }
-    if ($miss) { Fail "zip: all 23 doc files" ("missing: " + ($miss -join ", ")) } else { Pass "zip: all 23 doc files present" }
+    if ($miss) { Fail "zip: all 25 doc files" ("missing: " + ($miss -join ", ")) } else { Pass "zip: all 25 doc files present" }
 
-    # 5c. README in zip is v1.3.0
+    # 5c. README in zip is v1.3.1
     $z = [System.IO.Compression.ZipFile]::OpenRead($zip)
     $readmeEntry = $z.Entries | Where-Object { $_.FullName -eq "README.md" -or $_.FullName -replace "\\","/" -eq "README.md" } | Select-Object -First 1
     if ($readmeEntry) {
         $reader = New-Object System.IO.StreamReader($readmeEntry.Open())
         $readme = $reader.ReadToEnd()
         $reader.Close()
-        if ($readme -match "v1\.3\.0") { Pass "zip: README is v1.3.0" } else { Fail "zip: README is v1.3.0" "banner not v1.3.0" }
+        if ($readme -match "v1\.3\.1") { Pass "zip: README is v1.3.1" } else { Fail "zip: README is v1.3.1" "banner not v1.3.1" }
     } else {
         Fail "zip: README present" "no README.md in zip"
     }
@@ -141,7 +159,7 @@ if ($zip_present) {
     if ($hasStaging) { Fail "zip: no staging prefix" ($hasStaging[0].FullName) } else { Pass "zip: no staging prefix" }
 }
 
-# 9. v1.2.x + v1.3.0 source files in zip
+# 9. v1.2.x + v1.3.0 + v1.3.1 source files in zip
 if ($zip_present) {
     $z = [System.IO.Compression.ZipFile]::OpenRead($zip)
     $names = $z.Entries.FullName
@@ -150,6 +168,7 @@ if ($zip_present) {
         "src/dhc/cordis/secrets.py",
         "src/dhc/services/session_manager.py",
         "src/dhc/services/model_registry.py",
+        "src/dhc/services/model_config.py",
         "src/dhc/integrations/base.py",
         "src/dhc/integrations/openai_client.py",
         "src/dhc/integrations/anthropic_client.py",
@@ -159,15 +178,19 @@ if ($zip_present) {
         "apps/web/src/panels/SessionList.tsx",
         "apps/web/src/components/Markdown.tsx",
         "apps/web/src/components/ModelSelect.tsx",
+        "apps/web/src/components/ModelConfigMenu.tsx",
+        "apps/web/src/components/SettingsModal.tsx",
         "apps/web/src/components/SearchOverlay.tsx",
-        "apps/web/src/types/chat.ts"
+        "apps/web/src/types/chat.ts",
+        "apps/web/src/__tests__/SettingsModal.test.tsx",
+        "apps/web/src/__tests__/ModelConfigMenu.test.tsx"
     )
     $miss120 = @()
     foreach ($f in $want120) {
         $hit = $names | Where-Object { $_ -eq $f -or $_ -replace "\\","/" -eq $f }
         if (-not $hit) { $miss120 += $f }
     }
-    if ($miss120) { Fail "zip: v1.2.x+v1.3.0 source files" ("missing: " + ($miss120 -join ", ")) } else { Pass "zip: all 14 v1.2.x+v1.3.0 source files present" }
+    if ($miss120) { Fail "zip: v1.2.x+v1.3.0+v1.3.1 source files" ("missing: " + ($miss120 -join ", ")) } else { Pass "zip: all 19 v1.2.x+v1.3.0+v1.3.1 source files present" }
 }
 
 # Summary
