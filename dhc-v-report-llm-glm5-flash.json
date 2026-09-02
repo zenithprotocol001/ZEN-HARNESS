@@ -1,0 +1,156 @@
+{
+  "bands": {
+    "experimental": "50-79",
+    "production_ready": ">=80",
+    "unsafe": "<50"
+  },
+  "dhc_v": 0.0,
+  "findings": [
+    {
+      "description": "Module fails to import: plugin/Context not imported (NameError at collection)",
+      "module": "c8",
+      "severity": "critical"
+    },
+    {
+      "description": "HMAC verification uses == (timing side-channel)",
+      "module": "c8",
+      "severity": "critical"
+    },
+    {
+      "description": "Canonical HMAC input is body only, not ts.nonce.body - replay bypass",
+      "module": "c8",
+      "severity": "critical"
+    },
+    {
+      "description": "Pydantic v1 class Config is silently ignored by v2",
+      "module": "c8",
+      "severity": "high"
+    },
+    {
+      "description": "Nonce store is unbounded set() - OOM in production",
+      "module": "c8",
+      "severity": "high"
+    },
+    {
+      "description": "WebhookPayload not validated - returns stub with event=unknown",
+      "module": "c8",
+      "severity": "medium"
+    },
+    {
+      "description": "No short-secret guard - 3-byte secret accepted",
+      "module": "c8",
+      "severity": "low"
+    }
+  ],
+  "functionality": 90.0,
+  "modules": [
+    {
+      "findings": [],
+      "functionality": 100.0,
+      "module": "c1",
+      "notes": [],
+      "security": 100.0
+    },
+    {
+      "findings": [],
+      "functionality": 100.0,
+      "module": "c2",
+      "notes": [],
+      "security": 100.0
+    },
+    {
+      "findings": [],
+      "functionality": 100.0,
+      "module": "c3",
+      "notes": [],
+      "security": 100.0
+    },
+    {
+      "findings": [],
+      "functionality": 100.0,
+      "module": "c4",
+      "notes": [],
+      "security": 100.0
+    },
+    {
+      "findings": [],
+      "functionality": 100.0,
+      "module": "c5",
+      "notes": [],
+      "security": 100.0
+    },
+    {
+      "findings": [],
+      "functionality": 100.0,
+      "module": "c6",
+      "notes": [],
+      "security": 100.0
+    },
+    {
+      "findings": [],
+      "functionality": 100.0,
+      "module": "c7",
+      "notes": [],
+      "security": 100.0
+    },
+    {
+      "findings": [
+        {
+          "description": "Module fails to import: plugin/Context not imported (NameError at collection)",
+          "module": "c8",
+          "severity": "critical"
+        },
+        {
+          "description": "HMAC verification uses == (timing side-channel)",
+          "module": "c8",
+          "severity": "critical"
+        },
+        {
+          "description": "Canonical HMAC input is body only, not ts.nonce.body - replay bypass",
+          "module": "c8",
+          "severity": "critical"
+        },
+        {
+          "description": "Pydantic v1 class Config is silently ignored by v2",
+          "module": "c8",
+          "severity": "high"
+        },
+        {
+          "description": "Nonce store is unbounded set() - OOM in production",
+          "module": "c8",
+          "severity": "high"
+        },
+        {
+          "description": "WebhookPayload not validated - returns stub with event=unknown",
+          "module": "c8",
+          "severity": "medium"
+        },
+        {
+          "description": "No short-secret guard - 3-byte secret accepted",
+          "module": "c8",
+          "severity": "low"
+        }
+      ],
+      "functionality": 0.0,
+      "module": "c8",
+      "notes": [],
+      "security": 0.0
+    },
+    {
+      "findings": [],
+      "functionality": 100.0,
+      "module": "c9",
+      "notes": [],
+      "security": 100.0
+    },
+    {
+      "findings": [],
+      "functionality": 100.0,
+      "module": "c10",
+      "notes": [],
+      "security": 100.0
+    }
+  ],
+  "security": 0.0,
+  "security_floor_triggered": false
+}
