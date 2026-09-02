@@ -1,36 +1,46 @@
-DHC v1.3.0 — Relay Manifest
+DHC v1.3.1 — Relay Manifest
 ============================
 
-Ship date:    2026-09-02
+Ship date:    2026-09-03
 DHC-V:        100.0 (production_ready)
 Findings:     0 critical, 0 high, 0 medium, 0 low
-Test count:   388 passing, 2 skipped, 1 xpassed
+Test count:   430 passing (422 Python + 8 vitest), 2 skipped, 1 xpassed
 Invariants:   100+ passing (positive + negative)
 Bundled plugins: 5
 SHAs pinned:  5 / 5 (see docs/SHA-PINNING.md)
 
-What's new in v1.3.0 (over v1.2.1)
+What's new in v1.3.1 (over v1.3.0)
 -----------------------------------
-- 3 live LLM provider clients (OpenAI, Anthropic, OpenRouter)
-  behind an LLMProvider abstract base, with a 3-attempt, 1 s/2 s
-  linear retry policy (5xx + network errors only, no 4xx retry).
-- ModelRegistry with 6 hardcoded models across 4 providers
-  (mock-llm/default, openai/gpt-4o-mini, openai/gpt-4.1,
-  anthropic/claude-3-5-sonnet-latest, anthropic/claude-3-5-haiku-latest,
-  openrouter/auto).
-- C7 dispatch: LLMStreamAdapter accepts optional model_registry +
-  secrets_service; live dispatch when both are set and the model
-  is not the mock.
-- 2 new C1 routes: GET /api/models, GET /api/models/{id} (with
-  regex constraint to allow slashes in the id).
-- <ModelSelect> React component in the chat header, persisted
-  per-session via PATCH /api/sessions/{id} with {"model": ...}.
-- 3 new docs (v1.3.0-technical-spec, v1.3.0-test-plan, and
-  3 new ADRs: 0007, 0008, 0009).
-- Test count: 318 → 388 (+70).
+- v0x02 secrets envelope (ADR-0010): the per-envelope nonce is
+  now the scrypt KDF salt, so identical plaintexts no longer
+  share KDF inputs. `DHC1` envelopes from v1.2.0/v1.3.0 remain
+  readable. `SecretsService` gains `get_raw` / `put_raw` for
+  binary round-trip; `ModelConfigStore` uses them.
+- Per-session `ModelConfig` (ADR-0011): temperature,
+  max_tokens, top_p, system_prompt stored encrypted in
+  `SecretsService` under `model_config_{session_id}`. C7 reads
+  the config and forwards the knobs to the live provider.
+- 2 new C1 routes: `GET /api/sessions/{id}/config` and
+  `POST /api/sessions/{id}/config`.
+- `<SettingsModal>` React component: per-provider API key
+  entry, update, delete. No `prompt()` / `alert()` /
+  `confirm()` (all in-component React state).
+- `<ModelConfigMenu>` React component: range sliders for
+  temperature / max_tokens / top_p and a system prompt
+  textarea. Wired to the new config routes.
+- `StreamChunk.usage` field: optional
+  `{prompt_tokens, completion_tokens, total_tokens}` on the
+  final chunk of a stream. OpenAI and OpenRouter yield it via
+  a choices-less trailing SSE chunk; Anthropic yields it from
+  `message_delta`.
+- vitest frontend test runner: `apps/web/package.json` `test`
+  script runs `vitest run`. 8 React component tests in CI.
+- 2 new ADRs: 0010 (per-secret nonce), 0011 (model config
+  storage).
+- Test count: 388 → 430 (+42: +34 Python, +8 vitest).
 
-What's in v1.2.x (carried forward)
-----------------------------------
+What's in v1.3.x (carried forward)
+-----------------------------------
 - 4-tab web UI: Modules, Events, Prompts, Chat.
 - Server-side chat sessions (SessionManager) and encrypted
   secrets (SecretsService).
@@ -39,20 +49,38 @@ What's in v1.2.x (carried forward)
   dangerouslySetInnerHTML (ADR-0005).
 - /ws/chat, /api/sessions[/...], /api/secrets[/...], /api/llm/health.
 - 5 SHA-pinned plugins under src/dhc/plugins/.
+- 3 live LLM provider clients (OpenAI, Anthropic, OpenRouter)
+  behind an LLMProvider abstract base, with a 3-attempt, 1 s/2 s
+  linear retry policy (5xx + network errors only, no 4xx retry).
+- ModelRegistry with 6 hardcoded models across 4 providers
+  (mock-llm/default, openai/gpt-4o-mini, openai/gpt-4.1,
+  anthropic/claude-3-5-sonnet-latest, anthropic/claude-3-5-haiku-latest,
+  openrouter/auto).
+- 2 new C1 routes: GET /api/models, GET /api/models/{id} (with
+  regex constraint to allow slashes in the id).
+- <ModelSelect> React component in the chat header, persisted
+  per-session via PATCH /api/sessions/{id} with {"model": ...}.
 - 19-check v1.2.0 chat smoke (smoke_v12.py).
 
 Module map
 ----------
-C1  GuiWebCore           — aiohttp + WS + CSP + bearer token + marketplace routes + chat/sessions/secrets/LLM-health + /api/models routes + ws/chat
+C1  GuiWebCore           — aiohttp + WS + CSP + bearer token + marketplace routes + chat/sessions/secrets/LLM-health + /api/models routes + /api/sessions/{id}/config + ws/chat
 C2  SessionEventLog      — append-only tuple history with branching
 C3  PromptAssembler      — boundary tokens + capability-filtered tool schema
 C4  ToolGuardPipeline    — strict pydantic schemas; BashInput.command is list[str]
 C5  AgentRegistry        — HMAC-SHA256 manifests; 0x1F-separated canonical form
 C6  TurnStepDriver       — waterfall + circuit breaker (max_steps=5)
-C7  LLMStreamAdapter     — OpenAI-compatible SSE (GET + POST); 1 MiB buffer cap; v1.3.0 dispatch seam (model_registry + secrets_service)
+C7  LLMStreamAdapter     — OpenAI-compatible SSE (GET + POST); 1 MiB buffer cap; v1.3.0 dispatch seam (model_registry + secrets_service); v1.3.1 config_store seam
 C8  WebhookDispatch      — HMAC verify + LRU nonce store + ±5 min window
 C9  CapabilityPolicy     — deny-all default; intercepts tools/pre-execute
 C10 ObservabilitySink    — recursive PII/secret scrubber
+
+Envelope versions (ADR-0010)
+----------------------------
+  v0x01  (DHC1)  fixed scrypt salt  — v1.2.0/v1.3.0 writes
+  v0x02  (DHC2)  per-envelope nonce — v1.3.1 writes
+Both layouts are `HEADER (4) || nonce (16) || ct (n) || tag (32)`.
+`open_envelope` dispatches on the header.
 
 New in v1.3.0
 --------------
@@ -66,21 +94,35 @@ src/dhc/integrations/
 src/dhc/services/
   model_registry.py       Model + ModelRegistry (6 hardcoded models)
 
+New in v1.3.1
+-------------
+src/dhc/services/
+  model_config.py         ModelConfig (frozen dataclass) +
+                          ModelConfigStore (encrypted JSON in
+                          SecretsService under
+                          `model_config_{session_id}`)
+
 Web client
 ----------
 4 tabs: Modules, Events, Prompts, Chat
-  apps/web/src/App.tsx                  router + WS (4 tabs)
-  apps/web/src/panels/ModulesPanel.tsx  module/plugin grid + paste-and-score
-  apps/web/src/panels/EventsPanel.tsx   live event stream
-  apps/web/src/panels/PromptsPanel.tsx  10 master prompts browser
-  apps/web/src/panels/ChatPanel.tsx     chat (sessions, streaming, search, model select)
-  apps/web/src/panels/SessionList.tsx   left-rail session history
-  apps/web/src/components/Markdown.tsx  <Markdown/> + <ToolResult/> (XSS guardrail)
-  apps/web/src/components/ModelSelect.tsx   v1.3.0 model selector (ADR-0006)
-  apps/web/src/components/SearchOverlay.tsx  Ctrl+K search modal
-  apps/web/src/components/ModuleCard.tsx shared module/plugin card
-  apps/web/src/types/chat.ts            shared types (Message, Session, ChatFrame)
-  apps/web/src/sanitize.ts              DOMPurify wrappers (renderMarkdown, renderToolResult)
+  apps/web/src/App.tsx                       router + WS (4 tabs)
+  apps/web/src/panels/ModulesPanel.tsx       module/plugin grid + paste-and-score
+  apps/web/src/panels/EventsPanel.tsx        live event stream
+  apps/web/src/panels/PromptsPanel.tsx       10 master prompts browser
+  apps/web/src/panels/ChatPanel.tsx          chat (sessions, streaming, search, model select, config, keys)
+  apps/web/src/panels/SessionList.tsx        left-rail session history
+  apps/web/src/components/Markdown.tsx       <Markdown/> + <ToolResult/> (XSS guardrail)
+  apps/web/src/components/ModelSelect.tsx    v1.3.0 model selector (ADR-0006)
+  apps/web/src/components/ModelConfigMenu.tsx v1.3.1 per-session config sliders
+  apps/web/src/components/SettingsModal.tsx   v1.3.1 per-provider API key entry
+  apps/web/src/components/SearchOverlay.tsx   Ctrl+K search modal
+  apps/web/src/components/ModuleCard.tsx     shared module/plugin card
+  apps/web/src/types/chat.ts                 shared types (Message, Session, ChatFrame)
+  apps/web/src/sanitize.ts                   DOMPurify wrappers (renderMarkdown, renderToolResult)
+  apps/web/src/__tests__/                    vitest component tests
+    SettingsModal.test.tsx
+    ModelConfigMenu.test.tsx
+    smoke.test.ts
 
 Plugin marketplace
 ------------------
@@ -122,6 +164,10 @@ v1.3.0 (new):
   GET    /api/models             list 6 hardcoded models (ADR-0006)
   GET    /api/models/{id:.+}     fetch a single model
 
+v1.3.1 (new):
+  GET    /api/sessions/{id}/config   read per-session ModelConfig (ADR-0011)
+  POST   /api/sessions/{id}/config   write per-session ModelConfig
+
 Static verification (no Python needed)
 -------------------------------------
 scripts/static_check.ps1
@@ -133,11 +179,11 @@ scripts/dod_verify.ps1
 
 Sync recipe (from a provisioned host with git + gh)
 ----------------------------------------------------
-unzip harness_benchmark-v1.3.0-20260902.zip
+unzip harness_benchmark-v1.3.1-20260903.zip
 cd harness_benchmark
 git init
 git add .
-git commit -m "v1.3.0 reference implementation (DHC-V 100.0, live LLM providers)"
+git commit -m "v1.3.1 reference implementation (DHC-V 100.0, settings UI + per-secret nonce + model config + token usage)"
 git remote add origin git@github.com:zenithprotocol001/harness.git
 git push -u origin main --force
 
@@ -158,3 +204,4 @@ heartbeat_long.err.log
 __pycache__/
 .pytest_cache/
 *.pid
+apps/web/node_modules/  (reinstalled via `npm install` in apps/web)

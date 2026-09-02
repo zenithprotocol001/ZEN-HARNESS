@@ -228,3 +228,32 @@ async def test_chat_stream_extracts_stop_reason() -> None:
         ):
             finish_reasons.append(c.finish_reason)
         assert "end_turn" in finish_reasons
+
+
+# ---------- v1.3.1: token usage ----------
+
+
+@pytest.mark.asyncio
+async def test_chat_stream_yields_usage_on_message_delta() -> None:
+    """v1.3.1: the Anthropic parser surfaces the `usage` block
+    on the `message_delta` event as a `StreamChunk.usage` field."""
+    port = _free_port()
+    async with _mock_provider_server(
+        port,
+        anthropic_responses=[{"sse_anthropic": ["OK"]}],
+    ):
+        client = AnthropicClient(base_url=f"http://127.0.0.1:{port}")
+        chunks: list = []
+        async for c in client.chat_stream(
+            messages=[{"role": "user", "content": "x"}],
+            model="anthropic/claude-3-5-sonnet-latest",
+            api_key="sk-x",
+        ):
+            chunks.append(c)
+        # Find the chunk with usage.
+        usage_chunks = [c for c in chunks if c.usage is not None]
+        assert len(usage_chunks) == 1
+        u = usage_chunks[0].usage
+        assert u["prompt_tokens"] == 10
+        assert u["completion_tokens"] == 3
+        assert u["total_tokens"] == 13

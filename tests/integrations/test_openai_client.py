@@ -263,3 +263,34 @@ async def test_chat_stream_respects_custom_retry_config() -> None:
         ):
             deltas.append(c.delta)
         assert "".join(deltas) == "finally"
+
+
+# ---------- v1.3.1: token usage ----------
+
+
+@pytest.mark.asyncio
+async def test_chat_stream_yields_usage_on_final_chunk() -> None:
+    """v1.3.1: the OpenAI parser surfaces the `usage` block
+    from the choices-less trailing chunk as a terminating
+    `StreamChunk` with `usage` populated."""
+    port = _free_port()
+    async with _mock_provider_server(
+        port,
+        openai_responses=[{"sse_openai": ["Hi"]}],
+    ):
+        client = OpenAIClient(base_url=f"http://127.0.0.1:{port}")
+        chunks: list = []
+        async for c in client.chat_stream(
+            messages=[{"role": "user", "content": "Hi"}],
+            model="openai/gpt-4o-mini",
+            api_key="sk-test",
+        ):
+            chunks.append(c)
+        # Last chunk carries usage.
+        last = chunks[-1]
+        assert last.usage is not None
+        assert last.usage["prompt_tokens"] == 12
+        assert last.usage["completion_tokens"] == 7
+        assert last.usage["total_tokens"] == 19
+        # Intermediate chunks have usage=None.
+        assert all(c.usage is None for c in chunks[:-1])

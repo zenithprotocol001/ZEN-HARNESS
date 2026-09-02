@@ -10,6 +10,8 @@ import pytest
 from dhc.cordis.secrets import (
     DEFAULT_KEY_PATH,
     HEADER,
+    HEADER_V1,
+    HEADER_V2,
     NONCE_LEN,
     SecretEnvelopeError,
     SecretsService,
@@ -31,7 +33,7 @@ def test_seal_open_roundtrip_various_sizes():
         pt = bytes(range(256)) * (n // 256 + 1)
         pt = pt[:n]
         env = seal(pt, key)
-        assert env[: len(HEADER)] == HEADER
+        assert env[: len(HEADER)] in (HEADER_V1, HEADER_V2)
         assert len(env) == len(HEADER) + NONCE_LEN + n + TAG_LEN
         out = open_envelope(env, key)
         assert out == pt
@@ -128,7 +130,8 @@ def test_keystream_distinct_blocks():
 
 def test_derive_keys_distinct_labels():
     master = b"m" * 32
-    ks_key, mac_key = _derive_keys(master)
+    salt = b"s" * 16
+    ks_key, mac_key = _derive_keys(master, salt)
     assert len(ks_key) == 32
     assert len(mac_key) == 32
     assert ks_key != mac_key
@@ -136,7 +139,7 @@ def test_derive_keys_distinct_labels():
 
 def test_derive_keys_rejects_short_master():
     with pytest.raises(ValueError):
-        _derive_keys(b"short")
+        _derive_keys(b"short", b"s" * 16)
 
 
 # ---------- Key file management ----------
@@ -228,7 +231,7 @@ def test_service_log_value_is_encrypted_on_disk(tmp_path: Path):
     assert record["name"] == "openai"
     import base64
     blob = base64.b64decode(record["blob"])
-    assert blob[: len(HEADER)] == HEADER
+    assert blob[: len(HEADER)] in (HEADER_V1, HEADER_V2)
     assert len(blob) >= len(HEADER) + NONCE_LEN + TAG_LEN
 
 

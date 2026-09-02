@@ -9,7 +9,7 @@
 ║  ▓   ██████╔╝██║  ██║╚██████╔╝     ╚████╔╝                              ▓  ║
 ║  ▓   ╚═════╝ ╚═╝  ╚═╝ ╚═════╝       ╚═══╝                               ▓  ║
 ║  ▓                                                                    ▓  ║
-║  ▓   HARNESS CREATION BENCHMARK // v1.3.0 // DHC-V 100.0              ▓  ║
+║  ▓   HARNESS CREATION BENCHMARK // v1.3.1 // DHC-V 100.0              ▓  ║
 ║  ▓   Everything is a Plugin. Nothing is Trusted.                        ▓  ║
 ║  ▓                                                                    ▓  ║
 ║  ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓  ║
@@ -682,7 +682,7 @@ tests/
 | `eval/` | 2 | subprocess backup/restore; extract & rosetta for the offline eval wrapper |
 | `scoring/` | 1 | 28 tests: multiplicative formula, deductions, security<50 floor, re-weighting, no-additive guard |
 
-**Total: 388 passing, 2 skipped, 1 xpassed** at v1.3.0.
+**Total: 430 passing (422 Python + 8 vitest), 2 skipped, 1 xpassed** at v1.3.1.
 
 ### Run
 
@@ -811,7 +811,7 @@ The `relay/` folder is the project's ship channel.
 
 | File | Purpose |
 |---|---|
-| `harness_benchmark-v1.3.0-20260902.zip` | reference implementation (current) |
+| `harness_benchmark-v1.3.1-20260903.zip` | reference implementation (current) |
 | `MANIFEST.txt` | human-readable ship manifest with module map, plugin SHAs, static-check results, self-score, sync recipe, and exclusion list |
 
 The zip uses a clean root layout (`pyproject.toml`, `pytest.ini`, `src/`,

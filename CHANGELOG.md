@@ -3,6 +3,120 @@
 All notable changes to this project are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.3.1] - 2026-09-03
+
+### Added
+
+- **Per-secret nonce in the secrets envelope (ADR-0010)**:
+  v0x02 (`DHC2`) envelopes use the per-envelope 16-byte nonce
+  as the scrypt KDF salt, so identical plaintexts no longer
+  produce ciphertexts that share a KDF. The envelope header
+  bumps from `DHC1` to `DHC2`; old `DHC1` envelopes are still
+  readable. See `docs/secrets-model.md` and `docs/adr/0010`.
+- **Per-session `ModelConfig` (ADR-0011)**: `temperature`,
+  `max_tokens`, `top_p`, and `system_prompt` per session,
+  stored encrypted in `SecretsService` under
+  `model_config_{session_id}`. C7 reads the config and forwards
+  the knobs to the live provider; the system prompt is
+  prepended to the messages list if no `role: system` is
+  already present.
+- **2 new C1 routes**:
+  - `GET /api/sessions/{id}/config` → 200 with the config JSON.
+  - `POST /api/sessions/{id}/config` → 204; body is the config
+    JSON; out-of-range values yield 400.
+- **`<SettingsModal>` React component** in
+  `apps/web/src/components/SettingsModal.tsx`: per-provider
+  API key entry, update, and delete. Wired to
+  `POST /api/secrets` and `DELETE /api/secrets/{name}`.
+  No `prompt()` / `alert()` / `confirm()` — all input is
+  React state.
+- **`<ModelConfigMenu>` React component** in
+  `apps/web/src/components/ModelConfigMenu.tsx`: range
+  sliders for temperature / max_tokens / top_p and a
+  textarea for the system prompt. Wired to the new
+  `/api/sessions/{id}/config` routes.
+- **`StreamChunk.usage` field**: optional
+  `{"prompt_tokens", "completion_tokens", "total_tokens"}`
+  dict on the final chunk of a stream. OpenAI and OpenRouter
+  yield it from a choices-less trailing SSE chunk (with
+  `stream_options.include_usage: true` on the request);
+  Anthropic yields it from the `message_delta` event.
+- **vitest frontend test runner** (option A from the v1.3.1
+  plan): `apps/web/package.json` has a `test` script that
+  runs `vitest run`. The React component suite covers
+  `SettingsModal` (4 tests) and `ModelConfigMenu` (3 tests)
+  for a total of 8 frontend tests in CI.
+- **2 new docs**: `docs/adr/0010-per-secret-nonce.md`,
+  `docs/adr/0011-model-configuration.md`.
+
+### Changed
+
+- `LLMProvider.chat_stream` signature gains three optional
+  kwargs: `temperature`, `max_tokens`, `top_p` (all
+  keyword-only, default `None`). `None` means "let the
+  provider decide"; the field is omitted from the request
+  body. Existing callers (mock LLM, v1.3.0 tests) are
+  unaffected because all calls use kwargs by name.
+- `LLMStreamAdapter.__init__` accepts an optional
+  `config_store: ModelConfigStore` kwarg.
+  `LLMStreamAdapter.chat_stream` accepts an optional
+  `session_id` kwarg; the dispatch seam looks up the
+  per-session config and forwards the knobs.
+- `_ws_chat_handler_impl` and `_api_sessions_post_message`
+  now pass `session_id` to `chat_stream` and prefer
+  provider-supplied token usage over the v1.2.0 char/4
+  estimate.
+- `SecretsService` grows `get_raw` / `put_raw` for binary
+  round-trip (used by `ModelConfigStore`).
+- The `GLOSSARY.md` adds 5 new entries (envelope,
+  per-secret nonce, model config, token usage, `DHC1`/`DHC2`).
+
+### Security
+
+- The v0x02 envelope is a strict security improvement: every
+  secret now has a unique scrypt KDF input, so two envelopes
+  encrypted under the same master key no longer share any
+  subkey bytes.
+- The `<SettingsModal>` never calls `prompt()` / `alert()` /
+  `confirm()`; the API key is captured via a controlled
+  `<input type="password">` and POSTed in JSON. The browser
+  DevTools will see the user's keystrokes in the input, but
+  no `window.prompt` history is created.
+- The `<ModelConfigMenu>` does not collect any secret
+  material; only public model parameters.
+
+### Deferred to v1.3.2 (explicit)
+
+- Settings modal for per-model API keys (currently one key
+  per provider; the model selection is independent of the
+  key).
+- `StreamChunk.usage` aggregation across multiple turns
+  (today the totals are per-message).
+- Conversation branching, attachments, token counter,
+  context-window progress bar.
+
+### Tests
+
+- **430 passed, 2 skipped, 1 xpassed** at v1.3.1
+  (was 388 in v1.3.0).
+- +42 tests in v1.3.1:
+  - 8 `tests/chat/test_secrets_v2.py` (v0x02 envelope)
+  - 10 `tests/services/test_model_config.py` (ModelConfig +
+    ModelConfigStore)
+  - 5 `tests/chat/test_model_config_routes.py` (C1
+    /api/sessions/{id}/config)
+  - 3 `tests/chat/test_c7_dispatch.py` (config flow)
+  - 3 `tests/chat/test_stream_chunk_usage.py` (StreamChunk shape)
+  - 1 `tests/integrations/test_openai_client.py` (usage emission)
+  - 1 `tests/integrations/test_anthropic_client.py` (usage)
+  - 1 `tests/integrations/test_openrouter_client.py` (usage)
+  - 1 `tests/chat/test_secrets.py` (existing `_derive_keys`
+    signature update for the new `salt` arg)
+  - 8 frontend tests in `apps/web/src/__tests__/`:
+    - 4 `SettingsModal.test.tsx`
+    - 3 `ModelConfigMenu.test.tsx`
+    - 1 `smoke.test.ts`
+
 ## [1.3.0] - 2026-09-02
 
 ### Added

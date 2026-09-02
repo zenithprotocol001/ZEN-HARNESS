@@ -57,3 +57,9 @@
 | **relay** | The `relay/` folder where the versioned zip artifacts live. |
 | **invariants** | The PowerShell-based static checks in `scripts/invariants_check.ps1`. 92 of them at v1.1.0. |
 | **static check** | The set of PowerShell scripts that verify the harness without running Python. |
+| **envelope** | The encrypted at-rest blob in `~/.dhc/secrets/secrets.log`. Format: 4-byte header (`DHC1` or `DHC2`) + 16-byte nonce + ciphertext + 32-byte tag. |
+| **per-secret nonce** | The 16 random bytes stored in the envelope header slot. Used as the scrypt KDF salt in `DHC2` envelopes (v1.3.1+) so every secret gets a unique KDF. |
+| **model config** | Per-session LLM parameters (temperature, max_tokens, top_p, system_prompt) stored encrypted in `SecretsService` under the key `model_config_{session_id}`. |
+| **token usage** | The `prompt_tokens` + `completion_tokens` counts returned by an LLM provider. Surfaced in v1.3.1 via the `usage` field on the final `StreamChunk`. |
+| **`DHC1`** | The v0x01 envelope header. Fixed scrypt salt; read-only since v1.3.1. |
+| **`DHC2`** | The v0x02 envelope header. Per-envelope nonce as scrypt salt; default since v1.3.1. |

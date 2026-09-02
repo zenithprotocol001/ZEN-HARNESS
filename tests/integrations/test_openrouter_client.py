@@ -112,3 +112,31 @@ async def test_chat_stream_redacts_key_in_logs() -> None:
     # in a header, not in the body. The mock server's capture
     # already proved that.
     assert len(capture) == 1
+
+
+# ---------- v1.3.1: token usage ----------
+
+
+@pytest.mark.asyncio
+async def test_chat_stream_yields_usage_on_final_chunk() -> None:
+    """v1.3.1: the OpenRouter parser reuses the OpenAI SSE
+    parser, so the `usage` block on the trailing choices-less
+    chunk is surfaced as a `StreamChunk.usage`."""
+    port = _free_port()
+    async with _mock_provider_server(
+        port,
+        openrouter_responses=[{"sse_openai": ["Hi"]}],
+    ):
+        client = OpenRouterClient(base_url=f"http://127.0.0.1:{port}")
+        chunks: list = []
+        async for c in client.chat_stream(
+            messages=[{"role": "user", "content": "x"}],
+            model="openrouter/auto",
+            api_key="sk-x",
+        ):
+            chunks.append(c)
+        last = chunks[-1]
+        assert last.usage is not None
+        assert last.usage["prompt_tokens"] == 12
+        assert last.usage["completion_tokens"] == 7
+        assert last.usage["total_tokens"] == 19

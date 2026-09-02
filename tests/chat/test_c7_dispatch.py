@@ -449,12 +449,17 @@ async def test_c7_dispatch_retry_invisible_to_client(tmp_path: Path) -> None:
         original_chat = _oc.OpenAIClient.chat_stream
 
         async def _fast_chat_stream(self, messages, model, api_key,
-                                    retry_config=None):
+                                    retry_config=None,
+                                    *, temperature=None, max_tokens=None,
+                                    top_p=None):
             rc = retry_config or RetryConfig(
                 backoff_seconds=(0.01, 0.01)
             )
             async for c in original_chat(self, messages, model, api_key,
-                                         retry_config=rc):
+                                         retry_config=rc,
+                                         temperature=temperature,
+                                         max_tokens=max_tokens,
+                                         top_p=top_p):
                 yield c
 
         _oc.OpenAIClient.chat_stream = _fast_chat_stream  # type: ignore[assignment]
@@ -469,3 +474,145 @@ async def test_c7_dispatch_retry_invisible_to_client(tmp_path: Path) -> None:
         finally:
             _oc.OpenAIClient.chat_stream = original_chat  # type: ignore[assignment]
     _integrations.provider_client_for = _orig  # type: ignore[assignment]
+
+
+# ---------- v1.3.1: per-session ModelConfig flows through to provider ----------
+
+
+async def test_c7_dispatch_passes_config_temperature_and_max_tokens():
+    """When a `config_store` is wired and `session_id` is
+    provided, the per-session `ModelConfig` is read and the
+    `temperature` / `max_tokens` / `top_p` are forwarded to the
+    provider client (ADR-0011)."""
+    from dhc.integrations import openai_client as _oc
+    from dhc.modules.c7_llm_stream_adapter.service import LLMStreamAdapter
+    from dhc.services.model_config import ModelConfig, ModelConfigStore
+    from dhc.services.model_registry import ModelRegistry
+
+    captured: dict = {}
+
+    async def _capture(self, messages, model, api_key, retry_config=None,
+                       *, temperature=None, max_tokens=None, top_p=None):
+        captured["temperature"] = temperature
+        captured["max_tokens"] = max_tokens
+        captured["top_p"] = top_p
+        from dhc.modules.c7_llm_stream_adapter.service import StreamChunk
+        yield StreamChunk(delta="ok", raw_index=0)
+
+    original = _oc.OpenAIClient.chat_stream
+    _oc.OpenAIClient.chat_stream = _capture  # type: ignore[assignment]
+    try:
+        secrets = SecretsService(Path("."))
+        store = ModelConfigStore(secrets)
+        store.set_config("s1", ModelConfig(temperature=0.3, max_tokens=256, top_p=0.7))
+        adapter = LLMStreamAdapter(
+            base_url="http://127.0.0.1:0",
+            api_key="",
+            model_registry=ModelRegistry(),
+            secrets_service=secrets,
+            config_store=store,
+        )
+        # Plant a fake key.
+        secrets.put("llm_provider_openai_gpt-4o-mini", "sk-test-1234")
+        # Drive directly via chat_stream with a session_id.
+        async for _ in adapter.chat_stream(
+            messages=[{"role": "user", "content": "hi"}],
+            model="openai/gpt-4o-mini",
+            session_id="s1",
+        ):
+            pass
+        assert captured == {"temperature": 0.3, "max_tokens": 256, "top_p": 0.7}
+    finally:
+        _oc.OpenAIClient.chat_stream = original  # type: ignore[assignment]
+
+
+async def test_c7_dispatch_prepends_system_prompt_from_config():
+    """When a `config_store` is wired and the session has a
+    `system_prompt`, the messages list is prepended with a
+    `role: system` message (only if no system message is already
+    present)."""
+    from dhc.integrations import openai_client as _oc
+    from dhc.modules.c7_llm_stream_adapter.service import LLMStreamAdapter
+    from dhc.services.model_config import ModelConfig, ModelConfigStore
+    from dhc.services.model_registry import ModelRegistry
+
+    captured: dict = {}
+
+    async def _capture(self, messages, model, api_key, retry_config=None,
+                       *, temperature=None, max_tokens=None, top_p=None):
+        captured["messages"] = list(messages)
+        from dhc.modules.c7_llm_stream_adapter.service import StreamChunk
+        yield StreamChunk(delta="ok", raw_index=0)
+
+    original = _oc.OpenAIClient.chat_stream
+    _oc.OpenAIClient.chat_stream = _capture  # type: ignore[assignment]
+    try:
+        secrets = SecretsService(Path("."))
+        store = ModelConfigStore(secrets)
+        store.set_config("s1", ModelConfig(system_prompt="be terse"))
+        adapter = LLMStreamAdapter(
+            base_url="http://127.0.0.1:0",
+            api_key="",
+            model_registry=ModelRegistry(),
+            secrets_service=secrets,
+            config_store=store,
+        )
+        secrets.put("llm_provider_openai_gpt-4o-mini", "sk-test-1234")
+        async for _ in adapter.chat_stream(
+            messages=[{"role": "user", "content": "hi"}],
+            model="openai/gpt-4o-mini",
+            session_id="s1",
+        ):
+            pass
+        msgs = captured["messages"]
+        assert msgs[0] == {"role": "system", "content": "be terse"}
+        assert msgs[1] == {"role": "user", "content": "hi"}
+    finally:
+        _oc.OpenAIClient.chat_stream = original  # type: ignore[assignment]
+
+
+async def test_c7_dispatch_preserves_existing_system_message():
+    """If the caller already supplies a `role: system` message,
+    the config's `system_prompt` is NOT prepended (config is a
+    default, not an override)."""
+    from dhc.integrations import openai_client as _oc
+    from dhc.modules.c7_llm_stream_adapter.service import LLMStreamAdapter
+    from dhc.services.model_config import ModelConfig, ModelConfigStore
+    from dhc.services.model_registry import ModelRegistry
+
+    captured: dict = {}
+
+    async def _capture(self, messages, model, api_key, retry_config=None,
+                       *, temperature=None, max_tokens=None, top_p=None):
+        captured["messages"] = list(messages)
+        from dhc.modules.c7_llm_stream_adapter.service import StreamChunk
+        yield StreamChunk(delta="ok", raw_index=0)
+
+    original = _oc.OpenAIClient.chat_stream
+    _oc.OpenAIClient.chat_stream = _capture  # type: ignore[assignment]
+    try:
+        secrets = SecretsService(Path("."))
+        store = ModelConfigStore(secrets)
+        store.set_config("s1", ModelConfig(system_prompt="from-config"))
+        adapter = LLMStreamAdapter(
+            base_url="http://127.0.0.1:0",
+            api_key="",
+            model_registry=ModelRegistry(),
+            secrets_service=secrets,
+            config_store=store,
+        )
+        secrets.put("llm_provider_openai_gpt-4o-mini", "sk-test-1234")
+        existing = [
+            {"role": "system", "content": "from-caller"},
+            {"role": "user", "content": "hi"},
+        ]
+        async for _ in adapter.chat_stream(
+            messages=existing,
+            model="openai/gpt-4o-mini",
+            session_id="s1",
+        ):
+            pass
+        # Config did NOT prepend; caller's system message wins.
+        assert captured["messages"] == existing
+    finally:
+        _oc.OpenAIClient.chat_stream = original  # type: ignore[assignment]

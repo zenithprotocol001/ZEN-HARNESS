@@ -33,8 +33,15 @@ def _free_port() -> int:
         return s.getsockname()[1]
 
 
-def _build_openai_sse(*deltas: str) -> bytes:
-    """Build an OpenAI-shape SSE response with the given text deltas."""
+def _build_openai_sse(*deltas: str, include_usage: bool = True) -> bytes:
+    """Build an OpenAI-shape SSE response with the given text deltas.
+
+    When `include_usage` is True (default for v1.3.1 tests), the
+    response ends with a choices-less chunk carrying a `usage`
+    block, then `data: [DONE]`. This is the shape the live
+    OpenAI endpoint emits when the request body contains
+    `stream_options.include_usage`.
+    """
     out = b""
     for d in deltas:
         chunk = {
@@ -47,12 +54,28 @@ def _build_openai_sse(*deltas: str) -> bytes:
             }],
         }
         out += b"data: " + json.dumps(chunk).encode("utf-8") + b"\n\n"
+    if include_usage:
+        usage_chunk = {
+            "id": "chatcmpl-1",
+            "object": "chat.completion.chunk",
+            "choices": [],
+            "usage": {
+                "prompt_tokens": 12,
+                "completion_tokens": 7,
+                "total_tokens": 19,
+            },
+        }
+        out += b"data: " + json.dumps(usage_chunk).encode("utf-8") + b"\n\n"
     out += b"data: [DONE]\n\n"
     return out
 
 
-def _build_anthropic_sse(*text_deltas: str) -> bytes:
-    """Build an Anthropic-shape SSE response with the given text deltas."""
+def _build_anthropic_sse(*text_deltas: str, include_usage: bool = True) -> bytes:
+    """Build an Anthropic-shape SSE response with the given text deltas.
+
+    When `include_usage` is True (default for v1.3.1 tests), the
+    `message_delta` event includes a `usage` block.
+    """
     out = b""
     out += b"event: message_start\n"
     out += b'data: {"type":"message_start","message":{"id":"msg_1","type":"message","role":"assistant","content":[],"model":"claude-3-5-sonnet-latest","stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":10,"output_tokens":0}}}\n\n'
@@ -64,7 +87,13 @@ def _build_anthropic_sse(*text_deltas: str) -> bytes:
     out += b"event: content_block_stop\n"
     out += b'data: {"type":"content_block_stop","index":0}\n\n'
     out += b"event: message_delta\n"
-    out += b'data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null}}\n\n'
+    if include_usage:
+        out += (
+            b'data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null},'
+            b'"usage":{"input_tokens":10,"output_tokens":3}}\n\n'
+        )
+    else:
+        out += b'data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null}}\n\n'
     out += b"event: message_stop\n"
     out += b'data: {"type":"message_stop"}\n\n'
     return out
